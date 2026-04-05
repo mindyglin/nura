@@ -961,26 +961,33 @@ function App(){
 
   useEffect(()=>{
     let mounted=true;
+    const bootFallback=setTimeout(()=>{
+      if(mounted)setAuthPhase(current=>current==='loading'?'auth':current);
+    },4000);
     (async()=>{
-      if(!AUTH_READY){setAuthPhase('auth');return;}
-      let recoveredSession=null;
       try{
-        recoveredSession=await recoverSessionFromUrl();
-      }catch{}
-      const {data:{session:storedSession}}=await getSession();
-      const session=recoveredSession||storedSession;
-      if(!mounted)return;
-      if(!session?.user){setAuthPhase('auth');return;}
-      setSessionUser(session.user);
-      localStorage.setItem(AUTH_EMAIL_KEY,session.user.email||'');
-      try{
-        const remote=await loadRemoteProfile(session.user.id);
-        if(remote){dispatch({type:'LOAD_STATE',state:{...INIT_STATE,...remote}});setAuthPhase('app')}
-        else{setAuthPhase('onboarding')}
+        if(!AUTH_READY){setAuthPhase('auth');return;}
+        let recoveredSession=null;
+        try{
+          recoveredSession=await recoverSessionFromUrl();
+        }catch{}
+        const {data:{session:storedSession}}=await getSession();
+        const session=recoveredSession||storedSession;
+        if(!mounted)return;
+        if(!session?.user){setAuthPhase('auth');return;}
+        setSessionUser(session.user);
+        localStorage.setItem(AUTH_EMAIL_KEY,session.user.email||'');
+        try{
+          const remote=await loadRemoteProfile(session.user.id);
+          if(remote){dispatch({type:'LOAD_STATE',state:{...INIT_STATE,...remote}});setAuthPhase('app')}
+          else{setAuthPhase('onboarding')}
+        }catch{
+          setAuthPhase('onboarding');
+        }
       }catch{
-        setAuthPhase('onboarding');
+        if(mounted)setAuthPhase('auth');
       }
-    })();
+    })().finally(()=>clearTimeout(bootFallback));
     const {data:{subscription}}=AUTH_READY?sb.auth.onAuthStateChange(async(_event,session)=>{
       const user=session?.user||null;
       setSessionUser(user);
@@ -994,7 +1001,7 @@ function App(){
         setAuthPhase('onboarding');
       }
     }):{data:{subscription:{unsubscribe(){}}}};
-    return()=>{mounted=false;subscription.unsubscribe();};
+    return()=>{mounted=false;clearTimeout(bootFallback);subscription.unsubscribe();};
   },[]);
 
   useEffect(()=>{if(state.showXPPopup){const t=setTimeout(()=>dispatch({type:'HIDE_XP_POPUP'}),1500);return()=>clearTimeout(t)}},[state.showXPPopup]);
