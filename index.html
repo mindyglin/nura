@@ -77,7 +77,8 @@ const SUPABASE_URL='https://hbggwjeoyrhfhoixpxyw.supabase.co';
 const SUPABASE_ANON_KEY='sb_publishable_T2mshKPSxkpqtuugmwT-eA_fmYTAj8O';
 const AUTH_REDIRECT_URL=window.location.origin+window.location.pathname;
 const AUTH_READY=SUPABASE_URL.startsWith('http')&&SUPABASE_ANON_KEY&&SUPABASE_ANON_KEY!=='YOUR_SUPABASE_ANON_KEY';
-const sb=AUTH_READY?window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}}):null;
+const AUTH_EMAIL_KEY='nura-last-email';
+const sb=AUTH_READY?window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true,flowType:'pkce'}}):null;
 
 const PCFG={
   physical:{name:'Physical',icon:'🔥',color:'#C49060',light:'#FBF3EB',lightHex:'#FBF3EB'},
@@ -147,7 +148,7 @@ const LEGAL_COPY={
     title:'Privacy Policy',
     body:[
       'Nura uses your email address to authenticate your account with a magic link. If you enable cloud login, your wellness data is stored with your account so you can sign in on more than one device.',
-      'We store the email you use for login, authentication metadata supplied by the auth provider, and the wellness profile data you create inside the app. We do not sell this information.',
+      'We store the email you use for login, authentication metadata supplied by the auth provider, and the wellness profile data you create inside the app. If you choose password login, your authentication credentials are handled by the auth provider rather than stored directly in the app. We do not sell this information.',
       'The hosted version may use service providers for authentication, database storage, and transactional email delivery. Those providers process data only to operate the service.',
       'If you choose not to configure cloud auth, the app can remain local-only and your data stays in your browser.'
     ]
@@ -158,10 +159,10 @@ const LEGAL_COPY={
       'Nura is a self-guided wellness tool and is not medical, psychiatric, or emergency care.',
       'You are responsible for how you use the product and for the accuracy of anything you choose to log.',
       'The service may evolve over time, and hosted access may depend on third-party infrastructure such as authentication and database providers.',
-      'By continuing, you agree to use the product lawfully and understand that access can require email-based authentication.'
+      'By continuing, you agree to use the product lawfully and understand that access can require email-based authentication or a password-based sign-in.'
     ]
   },
-  consent:'By continuing, you agree that Nura may use your email to send a secure sign-in link and may store your profile and wellness logs in your account so you can access them across devices.'
+  consent:'By continuing, you agree that Nura may use your email for secure sign-in, may process password-based authentication if you choose it, and may store your profile and wellness logs in your account so you can access them across devices.'
 };
 
 // ============================================================
@@ -178,12 +179,50 @@ function gTier(x){for(const t of LVLS)if(x<=t.maxXP)return t;return LVLS[LVLS.le
 function gProg(x){const t=gTier(x),l=gLvl(x),lr=t.maxL-t.minL;if(!lr)return 1;const xpl=(t.maxXP-t.minXP)/lr,li=l-t.minL;return Math.min((x-(t.minXP+li*xpl))/xpl,1)}
 async function sendMagicLink(email){
   if(!sb)throw new Error('Supabase auth is not configured yet.');
+  localStorage.setItem(AUTH_EMAIL_KEY,email);
   const {error}=await sb.auth.signInWithOtp({email,options:{emailRedirectTo:AUTH_REDIRECT_URL}});
   if(error)throw error;
 }
 async function getSession(){
   if(!sb)return{session:null,error:null};
   return sb.auth.getSession();
+}
+async function signInWithPassword(email,password){
+  if(!sb)throw new Error('Supabase auth is not configured yet.');
+  localStorage.setItem(AUTH_EMAIL_KEY,email);
+  const {error}=await sb.auth.signInWithPassword({email,password});
+  if(error)throw error;
+}
+async function signUpWithPassword(email,password){
+  if(!sb)throw new Error('Supabase auth is not configured yet.');
+  localStorage.setItem(AUTH_EMAIL_KEY,email);
+  const {error}=await sb.auth.signUp({
+    email,
+    password,
+    options:{emailRedirectTo:AUTH_REDIRECT_URL}
+  });
+  if(error)throw error;
+}
+async function recoverSessionFromUrl(){
+  if(!sb)return null;
+  const url=new URL(window.location.href);
+  const code=url.searchParams.get('code');
+  if(code){
+    const {data,error}=await sb.auth.exchangeCodeForSession(window.location.href);
+    if(error)throw error;
+    window.history.replaceState({},document.title,AUTH_REDIRECT_URL);
+    return data?.session||null;
+  }
+  const hash=new URLSearchParams(window.location.hash.replace(/^#/,''));
+  const access_token=hash.get('access_token');
+  const refresh_token=hash.get('refresh_token');
+  if(access_token&&refresh_token){
+    const {data,error}=await sb.auth.setSession({access_token,refresh_token});
+    if(error)throw error;
+    window.history.replaceState({},document.title,AUTH_REDIRECT_URL);
+    return data?.session||null;
+  }
+  return null;
 }
 async function signOutRemote(){
   if(!sb)return;
@@ -413,18 +452,50 @@ function DrinkPicker({value,onChange}){
   );
 }
 function AuthGate({onAuthenticated}){
-  const[email,setEmail]=useState('');
+  const[email,setEmail]=useState(()=>localStorage.getItem(AUTH_EMAIL_KEY)||'');
+  const[password,setPassword]=useState('');
   const[status,setStatus]=useState('');
   const[error,setError]=useState('');
   const[legal,setLegal]=useState(null);
-  const submit=async()=>{
+  const[mode,setMode]=useState('password');
+  const submitMagicLink=async()=>{
     try{
+      setStatus('');
       setError('');
       if(!email.trim())return;
       await sendMagicLink(email.trim().toLowerCase());
       setStatus(`We sent a secure sign-in link to ${email.trim().toLowerCase()}.`);
     }catch(err){
+      const msg=(err.message||'Unable to send magic link right now.').toLowerCase();
+      if(msg.includes('rate limit')){
+        setError('Too many email sign-in requests were sent recently. Check your inbox for the latest link, or wait a minute before requesting another.');
+        setStatus('If you already clicked the latest email on this device, refresh this page to resume your session.');
+        return;
+      }
       setError(err.message||'Unable to send magic link right now.');
+    }
+  };
+  const submitPassword=async(kind='signin')=>{
+    try{
+      setStatus('');
+      setError('');
+      const normalized=email.trim().toLowerCase();
+      if(!normalized||!password.trim())return;
+      if(password.trim().length<8)return setError('Use at least 8 characters for your password.');
+      if(kind==='signup'){
+        await signUpWithPassword(normalized,password);
+        setStatus('Account created. If email confirmation is enabled in Supabase, check your inbox once, then you can keep signing in with your password.');
+        return;
+      }
+      await signInWithPassword(normalized,password);
+      setStatus('Signing you in...');
+    }catch(err){
+      const msg=(err.message||'Unable to sign in right now.');
+      if(msg.toLowerCase().includes('email not confirmed')){
+        setError('Your email still needs confirmation. Open the latest Supabase email, confirm once, then come back and sign in with your password.');
+        return;
+      }
+      setError(msg);
     }
   };
   return(
@@ -439,12 +510,26 @@ function AuthGate({onAuthenticated}){
           </div>
           <h1 className="font-heading text-4xl font-bold text-ink">Nura</h1>
           <p className="font-heading text-lg text-inkSoft italic mt-2">Your life, in motion</p>
-          <p className="text-sm text-inkMuted mt-3">Sign in with your email and we’ll send you a secure magic link. No password needed.</p>
+          <p className="text-sm text-inkMuted mt-3">Sign in with a password for the smoothest repeat login, or use a magic link when you want a one-tap email sign-in.</p>
         </div>
         {!AUTH_READY&&<Card className="mb-4 !bg-sandLight/70 !border-sand/20"><p className="text-sm font-medium text-ink">Auth setup needed</p><p className="text-xs text-inkSoft mt-1">Add your Supabase URL and anon key in this file before the public login flow will work.</p><p className="text-[11px] text-inkMuted mt-2 font-mono break-all">nura_profiles table: user_id uuid primary key, email text, profile_data jsonb, updated_at timestamptz</p></Card>}
         <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-2 p-1 rounded-2xl bg-sandLight/55 border border-border">
+            <button onClick={()=>{setMode('password');setStatus('');setError('');}} className={`rounded-xl px-3 py-2 text-sm font-medium transition-colors ${mode==='password'?'bg-white text-ink shadow-sm':'text-inkMuted hover:text-ink'}`}>Password</button>
+            <button onClick={()=>{setMode('magic');setStatus('');setError('');}} className={`rounded-xl px-3 py-2 text-sm font-medium transition-colors ${mode==='magic'?'bg-white text-ink shadow-sm':'text-inkMuted hover:text-ink'}`}>Magic link</button>
+          </div>
           <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@example.com" className="w-full px-4 py-3.5 rounded-2xl border border-border focus:border-sage focus:ring-2 focus:ring-sage/20 focus:outline-none text-sm bg-surface"/>
-          <Btn onClick={submit} className="w-full" size="lg" disabled={!AUTH_READY||!email.trim()}>Send magic link</Btn>
+          {mode==='password'&&<input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Choose or enter your password" className="w-full px-4 py-3.5 rounded-2xl border border-border focus:border-sage focus:ring-2 focus:ring-sage/20 focus:outline-none text-sm bg-surface"/>}
+          {mode==='password'?(
+            <div className="grid grid-cols-2 gap-3">
+              <Btn onClick={()=>submitPassword('signin')} className="w-full" size="lg" disabled={!AUTH_READY||!email.trim()||!password.trim()}>Sign in</Btn>
+              <Btn onClick={()=>submitPassword('signup')} className="w-full" size="lg" variant="secondary" disabled={!AUTH_READY||!email.trim()||!password.trim()}>Create account</Btn>
+            </div>
+          ):(
+            <Btn onClick={submitMagicLink} className="w-full" size="lg" disabled={!AUTH_READY||!email.trim()}>Send magic link</Btn>
+          )}
+          {mode==='password'&&<p className="text-[11px] text-inkMuted leading-5">New here? Enter your email and a password, then choose <span className="font-semibold text-ink">Create account</span>. After that, you can keep signing in without waiting on email limits.</p>}
+          {mode==='magic'&&<p className="text-[11px] text-inkMuted leading-5">Magic links are convenient, but Supabase can throttle email sends while you test. Password login is the more reliable repeat-login path.</p>}
           {status&&<Card className="!bg-sageLight/50 !border-sage/20"><p className="text-sm text-sageDark">{status}</p></Card>}
           {error&&<Card className="!bg-red-50 !border-red-100"><p className="text-sm text-red-600">{error}</p></Card>}
         </div>
@@ -862,10 +947,16 @@ function App(){
     let mounted=true;
     (async()=>{
       if(!AUTH_READY){setAuthPhase('auth');return;}
-      const {data:{session}}=await getSession();
+      let recoveredSession=null;
+      try{
+        recoveredSession=await recoverSessionFromUrl();
+      }catch{}
+      const {data:{session:storedSession}}=await getSession();
+      const session=recoveredSession||storedSession;
       if(!mounted)return;
       if(!session?.user){setAuthPhase('auth');return;}
       setSessionUser(session.user);
+      localStorage.setItem(AUTH_EMAIL_KEY,session.user.email||'');
       try{
         const remote=await loadRemoteProfile(session.user.id);
         if(remote){dispatch({type:'LOAD_STATE',state:{...INIT_STATE,...remote}});setAuthPhase('app')}
@@ -878,6 +969,7 @@ function App(){
       const user=session?.user||null;
       setSessionUser(user);
       if(!user){dispatch({type:'LOAD_STATE',state:INIT_STATE});setAuthPhase('auth');return;}
+      localStorage.setItem(AUTH_EMAIL_KEY,user.email||'');
       try{
         const remote=await loadRemoteProfile(user.id);
         if(remote){dispatch({type:'LOAD_STATE',state:{...INIT_STATE,...remote}});setAuthPhase('app')}
