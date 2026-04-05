@@ -203,6 +203,12 @@ async function signUpWithPassword(email,password){
   });
   if(error)throw error;
 }
+async function sendPasswordReset(email){
+  if(!sb)throw new Error('Supabase auth is not configured yet.');
+  localStorage.setItem(AUTH_EMAIL_KEY,email);
+  const {error}=await sb.auth.resetPasswordForEmail(email,{redirectTo:AUTH_REDIRECT_URL});
+  if(error)throw error;
+}
 async function updatePassword(password){
   if(!sb)throw new Error('Supabase auth is not configured yet.');
   const {error}=await sb.auth.updateUser({password});
@@ -458,8 +464,9 @@ function DrinkPicker({value,onChange}){
   );
 }
 function AuthGate({onAuthenticated}){
-  const[email,setEmail]=useState(()=>localStorage.getItem(AUTH_EMAIL_KEY)||'');
+  const[email,setEmail]=useState('');
   const[password,setPassword]=useState('');
+  const[resetEmail,setResetEmail]=useState('');
   const[status,setStatus]=useState('');
   const[error,setError]=useState('');
   const[legal,setLegal]=useState(null);
@@ -509,6 +516,18 @@ function AuthGate({onAuthenticated}){
       setError(msg);
     }
   };
+  const submitReset=async()=>{
+    try{
+      setStatus('');
+      setError('');
+      const normalized=(resetEmail||email).trim().toLowerCase();
+      if(!normalized)return;
+      await sendPasswordReset(normalized);
+      setStatus(`We sent a password reset link to ${normalized}. Open that email and come back here to choose a new password.`);
+    }catch(err){
+      setError(err.message||'Unable to send a password reset email right now.');
+    }
+  };
   return(
     <div className="min-h-screen auth-shell flex items-center justify-center px-4">
       <LegalModal open={!!legal} onClose={()=>setLegal(null)} doc={legal}/>
@@ -539,7 +558,10 @@ function AuthGate({onAuthenticated}){
           ):(
             <Btn onClick={submitMagicLink} className="w-full" size="lg" disabled={!AUTH_READY||!email.trim()}>Send magic link</Btn>
           )}
-          {mode==='password'&&<p className="text-[11px] text-inkMuted leading-5">New here? Enter your email and a password, then choose <span className="font-semibold text-ink">Create account</span>. After that, you can keep signing in without waiting on email limits.</p>}
+          {mode==='password'&&<>
+            <p className="text-[11px] text-inkMuted leading-5">New here? Enter your email and a password, then choose <span className="font-semibold text-ink">Create account</span>. After that, you can keep signing in without waiting on email limits.</p>
+            <button onClick={submitReset} className="text-xs text-sageDark font-medium text-left hover:text-sage">Forgot password?</button>
+          </>}
           {mode==='magic'&&<p className="text-[11px] text-inkMuted leading-5">Magic links are convenient, but Supabase can throttle email sends while you test. Password login is the more reliable repeat-login path.</p>}
           {status&&<Card className="!bg-sageLight/50 !border-sage/20"><p className="text-sm text-sageDark">{status}</p></Card>}
           {error&&<Card className="!bg-red-50 !border-red-100"><p className="text-sm text-red-600">{error}</p></Card>}
@@ -956,6 +978,7 @@ function App(){
   const[passwordConfirm,setPasswordConfirm]=useState('');
   const[passwordStatus,setPasswordStatus]=useState('');
   const[passwordError,setPasswordError]=useState('');
+  const[passwordModalTitle,setPasswordModalTitle]=useState('Set a password');
   const[state,dispatch]=useReducer(reducer,INIT_STATE);
   const[lastSavedAt,setLastSavedAt]=useState(0);
 
@@ -971,6 +994,11 @@ function App(){
         try{
           recoveredSession=await recoverSessionFromUrl();
         }catch{}
+        const hashParams=new URLSearchParams(window.location.hash.replace(/^#/,''));
+        if(hashParams.get('type')==='recovery'){
+          setPasswordModalTitle('Reset your password');
+          setShowPasswordModal(true);
+        }
         const {data:{session:storedSession}}=await getSession();
         const session=recoveredSession||storedSession;
         if(!mounted)return;
@@ -1030,7 +1058,7 @@ function App(){
       if(passwordDraft.trim().length<8)return setPasswordError('Use at least 8 characters for your password.');
       if(passwordDraft!==passwordConfirm)return setPasswordError('Your passwords do not match yet.');
       await updatePassword(passwordDraft);
-      setPasswordStatus('Password saved. You can use email + password the next time you log in.');
+      setPasswordStatus(passwordModalTitle==='Reset your password'?'Password reset complete. You can sign in with your new password now.':'Password saved. You can use email + password the next time you log in.');
       setPasswordDraft('');
       setPasswordConfirm('');
     }catch(err){
@@ -1047,6 +1075,7 @@ function App(){
       setPasswordConfirm('');
       setPasswordStatus('');
       setPasswordError('');
+      localStorage.removeItem(AUTH_EMAIL_KEY);
       dispatch({type:'LOAD_STATE',state:INIT_STATE});
       setSessionUser(null);
       setAuthPhase('auth');
@@ -1070,9 +1099,9 @@ function App(){
           <DrinkPicker value={state.user?.drinkType||'matcha'} onChange={v=>{dispatch({type:'SET_DRINK',drinkType:v});setShowDrinkPicker(false)}}/>
         </div>
       </Modal>
-      <Modal open={showPasswordModal} onClose={()=>setShowPasswordModal(false)} title="Set a password">
+      <Modal open={showPasswordModal} onClose={()=>setShowPasswordModal(false)} title={passwordModalTitle}>
         <div className="space-y-3">
-          <p className="text-sm text-inkSoft">If this account started with a magic link, you can add a password here once and use email + password from then on.</p>
+          <p className="text-sm text-inkSoft">{passwordModalTitle==='Reset your password'?'Choose a new password for your Nura account.':'If this account started with a magic link, you can add a password here once and use email + password from then on.'}</p>
           <input type="password" value={passwordDraft} onChange={e=>setPasswordDraft(e.target.value)} placeholder="New password" className="w-full px-4 py-3.5 rounded-2xl border border-border focus:border-sage focus:ring-2 focus:ring-sage/20 focus:outline-none text-sm bg-surface"/>
           <input type="password" value={passwordConfirm} onChange={e=>setPasswordConfirm(e.target.value)} placeholder="Confirm password" className="w-full px-4 py-3.5 rounded-2xl border border-border focus:border-sage focus:ring-2 focus:ring-sage/20 focus:outline-none text-sm bg-surface"/>
           <div className="grid grid-cols-2 gap-3">
@@ -1090,7 +1119,7 @@ function App(){
             <span className="w-6 h-6 rounded-full bg-sage/10 flex items-center justify-center text-[12px]">{(DRINKS.find(d=>d.id===state.user?.drinkType)||DRINKS[0]).emoji}</span>
             Change cup
           </button>
-          <button onClick={()=>setShowPasswordModal(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/80 border border-border hover:border-sand/40 text-xs text-inkSoft font-medium transition-all">
+          <button onClick={()=>{setPasswordModalTitle('Set a password');setPasswordStatus('');setPasswordError('');setShowPasswordModal(true);}} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/80 border border-border hover:border-sand/40 text-xs text-inkSoft font-medium transition-all">
             <span className="w-5 h-5 rounded-full bg-sand/20 flex items-center justify-center text-[10px]">🔒</span>
             Set password
           </button>
