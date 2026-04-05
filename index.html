@@ -203,6 +203,11 @@ async function signUpWithPassword(email,password){
   });
   if(error)throw error;
 }
+async function updatePassword(password){
+  if(!sb)throw new Error('Supabase auth is not configured yet.');
+  const {error}=await sb.auth.updateUser({password});
+  if(error)throw error;
+}
 async function recoverSessionFromUrl(){
   if(!sb)return null;
   const url=new URL(window.location.href);
@@ -226,7 +231,8 @@ async function recoverSessionFromUrl(){
 }
 async function signOutRemote(){
   if(!sb)return;
-  await sb.auth.signOut();
+  await sb.auth.signOut({scope:'local'});
+  window.history.replaceState({},document.title,AUTH_REDIRECT_URL);
 }
 async function loadRemoteProfile(userId){
   if(!sb)return null;
@@ -491,6 +497,11 @@ function AuthGate({onAuthenticated}){
       setStatus('Signing you in...');
     }catch(err){
       const msg=(err.message||'Unable to sign in right now.');
+      if(msg.toLowerCase().includes('already registered')||msg.toLowerCase().includes('already exists')||msg.toLowerCase().includes('user already registered')){
+        setError('This email already has a Nura account. Sign in instead. If this account was created with a magic link, sign in once with magic link and set a password from inside the app.');
+        setMode('password');
+        return;
+      }
       if(msg.toLowerCase().includes('email not confirmed')){
         setError('Your email still needs confirmation. Open the latest Supabase email, confirm once, then come back and sign in with your password.');
         return;
@@ -940,6 +951,11 @@ function App(){
   const[authPhase,setAuthPhase]=useState('loading'); // loading, auth, onboarding, app
   const[sessionUser,setSessionUser]=useState(null);
   const[showDrinkPicker,setShowDrinkPicker]=useState(false);
+  const[showPasswordModal,setShowPasswordModal]=useState(false);
+  const[passwordDraft,setPasswordDraft]=useState('');
+  const[passwordConfirm,setPasswordConfirm]=useState('');
+  const[passwordStatus,setPasswordStatus]=useState('');
+  const[passwordError,setPasswordError]=useState('');
   const[state,dispatch]=useReducer(reducer,INIT_STATE);
   const[lastSavedAt,setLastSavedAt]=useState(0);
 
@@ -1000,7 +1016,35 @@ function App(){
     setAuthPhase('app');
   };
 
-  const handleSignOut=async()=>{await signOutRemote();setSessionUser(null);setAuthPhase('auth');};
+  const handleSavePassword=async()=>{
+    try{
+      setPasswordError('');
+      setPasswordStatus('');
+      if(passwordDraft.trim().length<8)return setPasswordError('Use at least 8 characters for your password.');
+      if(passwordDraft!==passwordConfirm)return setPasswordError('Your passwords do not match yet.');
+      await updatePassword(passwordDraft);
+      setPasswordStatus('Password saved. You can use email + password the next time you log in.');
+      setPasswordDraft('');
+      setPasswordConfirm('');
+    }catch(err){
+      setPasswordError(err.message||'Unable to save your password right now.');
+    }
+  };
+
+  const handleSignOut=async()=>{
+    try{
+      await signOutRemote();
+    }finally{
+      setShowPasswordModal(false);
+      setPasswordDraft('');
+      setPasswordConfirm('');
+      setPasswordStatus('');
+      setPasswordError('');
+      dispatch({type:'LOAD_STATE',state:INIT_STATE});
+      setSessionUser(null);
+      setAuthPhase('auth');
+    }
+  };
 
   if(authPhase==='loading')return<div className="min-h-screen bg-bg flex items-center justify-center"><div className="text-3xl animate-float">🌿</div></div>;
   if(authPhase==='auth')return<AuthGate/>;
@@ -1019,12 +1063,31 @@ function App(){
           <DrinkPicker value={state.user?.drinkType||'matcha'} onChange={v=>{dispatch({type:'SET_DRINK',drinkType:v});setShowDrinkPicker(false)}}/>
         </div>
       </Modal>
+      <Modal open={showPasswordModal} onClose={()=>setShowPasswordModal(false)} title="Set a password">
+        <div className="space-y-3">
+          <p className="text-sm text-inkSoft">If this account started with a magic link, you can add a password here once and use email + password from then on.</p>
+          <input type="password" value={passwordDraft} onChange={e=>setPasswordDraft(e.target.value)} placeholder="New password" className="w-full px-4 py-3.5 rounded-2xl border border-border focus:border-sage focus:ring-2 focus:ring-sage/20 focus:outline-none text-sm bg-surface"/>
+          <input type="password" value={passwordConfirm} onChange={e=>setPasswordConfirm(e.target.value)} placeholder="Confirm password" className="w-full px-4 py-3.5 rounded-2xl border border-border focus:border-sage focus:ring-2 focus:ring-sage/20 focus:outline-none text-sm bg-surface"/>
+          <div className="grid grid-cols-2 gap-3">
+            <Btn onClick={handleSavePassword} className="w-full">Save password</Btn>
+            <Btn onClick={()=>setShowPasswordModal(false)} variant="secondary" className="w-full">Not now</Btn>
+          </div>
+          {passwordStatus&&<Card className="!bg-sageLight/50 !border-sage/20"><p className="text-sm text-sageDark">{passwordStatus}</p></Card>}
+          {passwordError&&<Card className="!bg-red-50 !border-red-100"><p className="text-sm text-red-600">{passwordError}</p></Card>}
+        </div>
+      </Modal>
       {/* Profile switcher bar */}
       <div className="max-w-lg mx-auto px-4 pt-3 flex items-center justify-between gap-2">
-        <button onClick={()=>setShowDrinkPicker(true)} className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/80 border border-border hover:border-sage/30 text-xs text-inkSoft font-medium transition-all">
-          <span className="w-6 h-6 rounded-full bg-sage/10 flex items-center justify-center text-[12px]">{(DRINKS.find(d=>d.id===state.user?.drinkType)||DRINKS[0]).emoji}</span>
-          Change cup
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={()=>setShowDrinkPicker(true)} className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/80 border border-border hover:border-sage/30 text-xs text-inkSoft font-medium transition-all">
+            <span className="w-6 h-6 rounded-full bg-sage/10 flex items-center justify-center text-[12px]">{(DRINKS.find(d=>d.id===state.user?.drinkType)||DRINKS[0]).emoji}</span>
+            Change cup
+          </button>
+          <button onClick={()=>setShowPasswordModal(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/80 border border-border hover:border-sand/40 text-xs text-inkSoft font-medium transition-all">
+            <span className="w-5 h-5 rounded-full bg-sand/20 flex items-center justify-center text-[10px]">🔒</span>
+            Set password
+          </button>
+        </div>
         <button onClick={handleSignOut} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-surfaceAlt hover:bg-sageLight text-xs text-inkSoft font-medium transition-all">
           <span className="w-5 h-5 rounded-full bg-sage/10 flex items-center justify-center text-[10px]">✦</span>
           Sign out
