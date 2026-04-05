@@ -147,6 +147,7 @@ const DRINKS=[
   {id:'boba',name:'Bubble Tea',liquid:'#D4B896',liquidL:'#EAD8C0',foam:'#F5EDD8',acc:'#3A2E20',cup:'#E8E5DE',emoji:'🧋'},
   {id:'water',name:'Water',liquid:'#7CB9D6',liquidL:'#B5D9EB',foam:'#E8F4F8',acc:'#4A8EA8',cup:'#E0E0DE',emoji:'💧'},
 ];
+const EMOJI_OPTIONS=['💪','🚶‍♀️','⚡','😴','🥗','🧘‍♀️','🕯️','📝','🛋️','📵','🌿','🙏','📚','🎓','🎯','🎧','🔬','🎨','🎵','✍️','🔨','📸','👨‍🍳','🏃‍♀️','🚴‍♀️','🏋️‍♀️','🧠','💡','🧩','🎬','🎤','🪴','🌞','🌊','🍎','🥤','🫶'];
 const LEGAL_COPY={
   privacy:{
     title:'Privacy Policy',
@@ -857,7 +858,7 @@ function Onboarding({onComplete,onBack}){
 // ============================================================
 // DASHBOARD
 // ============================================================
-function Dashboard({state,dispatch}){
+function Dashboard({state,dispatch,onChangeCup}){
   const{user,logs,activities,xp,streaks,glowScore,avatarState}=state;
   const tLogs=logs.filter(l=>l.date===td());const tPillars=new Set(tLogs.map(l=>l.pillar));
   const level=gLvl(xp),tier=gTier(xp),prog=gProg(xp);
@@ -902,6 +903,10 @@ function Dashboard({state,dispatch}){
           <p className="font-mono text-[10px] text-inkMuted">{xp.toLocaleString()} XP</p>
         </div>
         {cosmetics.length>0&&<div className="mt-3 flex flex-wrap justify-center gap-1.5">{cosmetics.map(item=><span key={item} className="px-2 py-1 rounded-full text-[10px] font-medium bg-white/70 text-inkSoft">{item}</span>)}</div>}
+        <button onClick={onChangeCup} className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-2xl bg-white/85 border border-border hover:border-sage/40 text-xs font-semibold text-inkSoft transition-all">
+          <span className="w-6 h-6 rounded-full bg-sage/10 flex items-center justify-center text-[12px]">{(DRINKS.find(d=>d.id===user?.drinkType)||DRINKS[0]).emoji}</span>
+          Change cup
+        </button>
       </Card>
       {todaysPlan&&<div className="mb-4"><StarterPlanCard plan={[todaysPlan]} compact={false}/></div>}
       {avatarState.decayDays>0&&<Card className="mb-4 !bg-sandLight/60 !border-sand/20"><p className="text-sm font-medium text-ink">Gentle accountability check-in</p><p className="text-xs text-inkSoft mt-1">{avatarState.decayDays===1?'You missed a day, and Nura noticed with a very slight dimming.':'A little slump has returned. One small win today will brighten your avatar again.'}</p></Card>}
@@ -935,10 +940,9 @@ function Dashboard({state,dispatch}){
 // LOG ACTIVITY
 // ============================================================
 function LogActivity({state,dispatch,pillar}){
-  const[sp,setSP]=useState(pillar||'physical');const[sa,setSA]=useState(null);const[dur,setDur]=useState('');const[int,setInt]=useState('medium');const[notes,setNotes]=useState('');const[sc,setSC]=useState(false);const[cn,setCN]=useState('');const[cx,setCX]=useState(25);const[err,setErr]=useState('');
+  const[sp,setSP]=useState(pillar||'physical');const[sa,setSA]=useState(null);const[dur,setDur]=useState('');const[int,setInt]=useState('medium');const[notes,setNotes]=useState('');const[sc,setSC]=useState(false);const[cn,setCN]=useState('');const[cx,setCX]=useState(25);const[logDate,setLogDate]=useState(td());const[err,setErr]=useState('');
   const pa=state.activities.filter(a=>a.pillar===sp);
   const handleLog=()=>{
-    const logDate=td();
     if(logDate>td()){setErr('You can only log today or past dates.');return;}
     if(!sa&&!sc)return;const act=sc?null:state.activities.find(a=>a.id===sa);const xpB=sc?cx:(act?.xp||10);const xpM=int==='easy'?.8:int==='hard'?1.5:1;const xpE=Math.round(xpB*xpM);
     const le={id:uid(),activityId:sc?'custom-'+uid():sa,activityName:sc?cn:act?.name,pillar:sp,date:logDate,duration:dur?parseInt(dur):null,intensity:int,notes,xp:xpE};
@@ -956,6 +960,7 @@ function LogActivity({state,dispatch,pillar}){
       </div>
       {sc&&<Card className="mb-4 space-y-3 animate-slide-up"><input type="text" value={cn} onChange={e=>setCN(e.target.value)} placeholder="Activity name" className="w-full px-3.5 py-2.5 rounded-lg border border-border focus:border-sage focus:ring-1 focus:ring-sage/20 focus:outline-none text-sm" autoFocus/><div className="flex gap-1.5">{[{v:10,l:'10 XP'},{v:25,l:'25 XP'},{v:50,l:'50 XP'},{v:100,l:'100 XP'}].map(o=><button key={o.v} onClick={()=>setCX(o.v)} className={`flex-1 py-2 rounded-lg text-xs font-medium transition-all ${cx===o.v?'bg-sage text-white':'bg-surfaceAlt text-inkSoft'}`}>{o.l}</button>)}</div></Card>}
       {(sa||(sc&&cn.trim()))&&<Card className="space-y-3 mb-4 animate-slide-up">
+        <div><label className="text-xs font-medium text-inkMuted block mb-1.5">Date</label><input type="date" value={logDate} max={td()} onChange={e=>setLogDate(e.target.value)} className="w-full px-3.5 py-2.5 rounded-lg border border-border focus:border-sage focus:outline-none text-sm bg-surface"/></div>
         <div><label className="text-xs font-medium text-inkMuted block mb-1.5">Intensity</label><div className="flex gap-1.5">{['easy','medium','hard'].map(i=><button key={i} onClick={()=>setInt(i)} className={`flex-1 py-2 rounded-lg text-xs font-medium capitalize transition-all ${int===i?'bg-sage text-white':'bg-surfaceAlt text-inkSoft'}`}>{i}</button>)}</div></div>
         <div><label className="text-xs font-medium text-inkMuted block mb-1.5">Duration (optional)</label><input type="number" value={dur} onChange={e=>setDur(e.target.value)} placeholder="Minutes" className="w-full px-3.5 py-2.5 rounded-lg border border-border focus:border-sage focus:outline-none text-sm"/></div>
         <div><label className="text-xs font-medium text-inkMuted block mb-1.5">Notes (optional)</label><textarea value={notes} onChange={e=>setNotes(e.target.value)} placeholder="How did it go?" className="w-full px-3.5 py-2.5 rounded-lg border border-border focus:border-sage focus:outline-none text-sm resize-none" rows={2}/></div>
@@ -986,7 +991,7 @@ function ActivitiesView({state,dispatch}){
       <div className="space-y-1.5 mb-4">{pa.map(act=><div key={act.id} className="flex items-center gap-3 p-3.5 bg-surface rounded-xl border border-border group"><span className="text-lg">{act.icon}</span><div className="flex-1 min-w-0"><p className="font-medium text-sm text-ink truncate">{act.name}{act.isCustom&&<span className="text-[10px] text-inkMuted ml-1.5">custom</span>}</p><p className="text-xs text-inkMuted truncate">{act.desc}</p></div><span className="font-mono text-xs" style={{color:PCFG[ap].color}}>{act.xp}</span><button onClick={()=>openEdit(act)} className="w-7 h-7 rounded-lg bg-surfaceAlt flex items-center justify-center text-inkMuted hover:bg-sageLight hover:text-sage text-xs opacity-50 group-hover:opacity-100">✎</button><button onClick={()=>setConfirmDel(act.id)} className="w-7 h-7 rounded-lg bg-surfaceAlt flex items-center justify-center text-inkMuted hover:bg-red-50 hover:text-red-500 text-xs opacity-50 group-hover:opacity-100">×</button></div>)}</div>
       <button onClick={()=>setShowAdd(true)} className="w-full p-3.5 rounded-xl border border-dashed border-border text-inkMuted hover:border-sage hover:text-sage transition-all text-sm font-medium">+ Add Activity</button>
       <Modal open={showAdd} onClose={()=>setShowAdd(false)} title="New Activity"><div className="space-y-3"><input type="text" value={nn} onChange={e=>setNN(e.target.value)} placeholder="Name" className="w-full px-3.5 py-2.5 rounded-lg border border-border focus:border-sage focus:outline-none text-sm" autoFocus/><input type="text" value={nd} onChange={e=>setND(e.target.value)} placeholder="Description" className="w-full px-3.5 py-2.5 rounded-lg border border-border focus:border-sage focus:outline-none text-sm"/><div className="flex gap-1.5">{[10,25,50,100].map(v=><button key={v} onClick={()=>setNX(v)} className={`flex-1 py-2 rounded-lg text-xs font-medium ${nx===v?'bg-sage text-white':'bg-surfaceAlt text-inkSoft'}`}>{v} XP</button>)}</div><Btn onClick={handleAdd} disabled={!nn.trim()} className="w-full" size="md">Add</Btn></div></Modal>
-      <Modal open={!!editAct} onClose={()=>setEditAct(null)} title="Edit Activity"><div className="space-y-3"><input type="text" value={en} onChange={e=>setEN(e.target.value)} placeholder="Name" className="w-full px-3.5 py-2.5 rounded-lg border border-border focus:border-sage focus:outline-none text-sm"/><input type="text" value={ed} onChange={e=>setED(e.target.value)} placeholder="Description" className="w-full px-3.5 py-2.5 rounded-lg border border-border focus:border-sage focus:outline-none text-sm"/><div><label className="text-xs font-medium text-inkMuted block mb-1.5">Icon (emoji)</label><input type="text" value={ei} onChange={e=>setEI(e.target.value)} placeholder="e.g. 💪" className="w-20 px-3 py-2.5 rounded-lg border border-border focus:border-sage focus:outline-none text-sm text-center"/></div><div className="flex gap-1.5">{[10,25,50,100].map(v=><button key={v} onClick={()=>setEX(v)} className={`flex-1 py-2 rounded-lg text-xs font-medium ${ex===v?'bg-sage text-white':'bg-surfaceAlt text-inkSoft'}`}>{v} XP</button>)}</div><div className="flex gap-2"><Btn onClick={handleEdit} disabled={!en.trim()} className="flex-1" size="md">Save</Btn><Btn onClick={()=>setConfirmDel(editAct?.id)} variant="danger" size="md">Delete</Btn></div></div></Modal>
+      <Modal open={!!editAct} onClose={()=>setEditAct(null)} title="Edit Activity"><div className="space-y-3"><input type="text" value={en} onChange={e=>setEN(e.target.value)} placeholder="Name" className="w-full px-3.5 py-2.5 rounded-lg border border-border focus:border-sage focus:outline-none text-sm"/><input type="text" value={ed} onChange={e=>setED(e.target.value)} placeholder="Description" className="w-full px-3.5 py-2.5 rounded-lg border border-border focus:border-sage focus:outline-none text-sm"/><div><label className="text-xs font-medium text-inkMuted block mb-1.5">Icon (emoji)</label><select value={ei} onChange={e=>setEI(e.target.value)} className="w-full px-3 py-2.5 rounded-lg border border-border focus:border-sage focus:outline-none text-sm bg-surface">{EMOJI_OPTIONS.map(emoji=><option key={emoji} value={emoji}>{emoji}</option>)}</select></div><div className="grid grid-cols-6 gap-1.5 rounded-xl bg-surfaceAlt/60 p-2">{EMOJI_OPTIONS.map(emoji=><button key={emoji} onClick={()=>setEI(emoji)} className={`h-10 rounded-lg text-lg transition-all ${ei===emoji?'bg-white ring-1 ring-sage shadow-sm':'hover:bg-white/70'}`}>{emoji}</button>)}</div><div className="flex gap-1.5">{[10,25,50,100].map(v=><button key={v} onClick={()=>setEX(v)} className={`flex-1 py-2 rounded-lg text-xs font-medium ${ex===v?'bg-sage text-white':'bg-surfaceAlt text-inkSoft'}`}>{v} XP</button>)}</div><div className="flex gap-2"><Btn onClick={handleEdit} disabled={!en.trim()} className="flex-1" size="md">Save</Btn><Btn onClick={()=>setConfirmDel(editAct?.id)} variant="danger" size="md">Delete</Btn></div></div></Modal>
       <Modal open={!!confirmDel} onClose={()=>setConfirmDel(null)} title="Remove Activity?"><p className="text-sm text-inkSoft mb-4">Past logs won't be affected.</p><div className="flex gap-2"><Btn onClick={()=>setConfirmDel(null)} variant="secondary" className="flex-1" size="md">Cancel</Btn><Btn onClick={()=>handleDel(confirmDel)} variant="danger" className="flex-1" size="md">Remove</Btn></div></Modal>
     </div>
   );
@@ -1253,7 +1258,7 @@ function App(){
   if(authPhase==='onboarding')return<Onboarding onComplete={handleCreateProfile} onBack={null}/>;
 
   // Main app
-  const views={dashboard:<Dashboard state={state} dispatch={dispatch}/>,log:<LogActivity state={state} dispatch={dispatch} pillar={state.logPillar}/>,stats:<StatsView state={state}/>,achievements:<AchievementsView state={state}/>,activities:<ActivitiesView state={state} dispatch={dispatch}/>};
+  const views={dashboard:<Dashboard state={state} dispatch={dispatch} onChangeCup={()=>setShowDrinkPicker(true)}/>,log:<LogActivity state={state} dispatch={dispatch} pillar={state.logPillar}/>,stats:<StatsView state={state}/>,achievements:<AchievementsView state={state}/>,activities:<ActivitiesView state={state} dispatch={dispatch}/>};
   const nav=[{id:'dashboard',icon:'⌂',label:'Home'},{id:'stats',icon:'◔',label:'Stats'},{id:'log',icon:'+',label:'Log',accent:true},{id:'achievements',icon:'◆',label:'Awards'},{id:'activities',icon:'≡',label:'Activities'}];
 
   return(
@@ -1279,24 +1284,22 @@ function App(){
           {passwordError&&<Card className="!bg-red-50 !border-red-100"><p className="text-sm text-red-600">{passwordError}</p></Card>}
         </div>
       </Modal>
-      {/* Profile switcher bar */}
-      <div className="max-w-lg mx-auto px-4 pt-3 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <button onClick={()=>setShowDrinkPicker(true)} className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/80 border border-border hover:border-sage/30 text-xs text-inkSoft font-medium transition-all">
-            <span className="w-6 h-6 rounded-full bg-sage/10 flex items-center justify-center text-[12px]">{(DRINKS.find(d=>d.id===state.user?.drinkType)||DRINKS[0]).emoji}</span>
-            Change cup
-          </button>
+      <header className="max-w-lg mx-auto px-4 pt-3 pb-2 flex items-start justify-between gap-3">
+        <div>
+          <p className="font-heading text-2xl font-bold text-ink">Nura</p>
+          <p className="text-[11px] text-inkMuted mt-1">{sessionUser?.email}</p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap justify-end">
           <button onClick={()=>{setPasswordModalTitle('Set a password');setPasswordStatus('');setPasswordError('');setShowPasswordModal(true);}} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/80 border border-border hover:border-sand/40 text-xs text-inkSoft font-medium transition-all">
             <span className="w-5 h-5 rounded-full bg-sand/20 flex items-center justify-center text-[10px]">🔒</span>
             Set password
           </button>
+          <button onClick={handleSignOut} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-surfaceAlt hover:bg-sageLight text-xs text-inkSoft font-medium transition-all">
+            <span className="w-5 h-5 rounded-full bg-sage/10 flex items-center justify-center text-[10px]">✦</span>
+            Sign out
+          </button>
         </div>
-        <button onClick={handleSignOut} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-surfaceAlt hover:bg-sageLight text-xs text-inkSoft font-medium transition-all">
-          <span className="w-5 h-5 rounded-full bg-sage/10 flex items-center justify-center text-[10px]">✦</span>
-          Sign out
-        </button>
-      </div>
-      <div className="max-w-lg mx-auto px-4 pt-2"><p className="text-[11px] text-inkMuted">{sessionUser?.email}</p></div>
+      </header>
       <div className="max-w-lg mx-auto px-4 pb-24">
         {state.errorMessage&&<Card className="mb-4 !bg-red-50 !border-red-100"><div className="flex items-start justify-between gap-3"><p className="text-sm text-red-600">{state.errorMessage}</p><button onClick={()=>dispatch({type:'CLEAR_ERROR'})} className="text-red-400 text-xs">✕</button></div></Card>}
         {views[state.currentView]||views.dashboard}
