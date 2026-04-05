@@ -77,11 +77,12 @@ const {useState,useEffect,useReducer,useRef}=React;
 const SUPABASE_URL='https://hbggwjeoyrhfhoixpxyw.supabase.co';
 const SUPABASE_ANON_KEY='sb_publishable_T2mshKPSxkpqtuugmwT-eA_fmYTAj8O';
 const AUTH_REDIRECT_URL=window.location.origin+window.location.pathname;
+const RESET_REDIRECT_URL=(()=>{const url=new URL(AUTH_REDIRECT_URL);url.searchParams.set('reset','1');return url.toString();})();
 const AUTH_READY=SUPABASE_URL.startsWith('http')&&SUPABASE_ANON_KEY&&SUPABASE_ANON_KEY!=='YOUR_SUPABASE_ANON_KEY';
 const AUTH_EMAIL_KEY='nura-last-email';
 const PROFILE_BACKUP_PREFIX='nura-profile-backup:';
 const SUPABASE_PROJECT_REF=AUTH_READY?new URL(SUPABASE_URL).hostname.split('.')[0]:'';
-const sb=AUTH_READY?window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true,flowType:'pkce'}}):null;
+const sb=AUTH_READY?window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:false,flowType:'pkce'}}):null;
 
 const PCFG={
   physical:{name:'Physical',icon:'🔥',color:'#C49060',light:'#FBF3EB',lightHex:'#FBF3EB'},
@@ -209,7 +210,7 @@ async function signUpWithPassword(email,password){
 async function sendPasswordReset(email){
   if(!sb)throw new Error('Supabase auth is not configured yet.');
   localStorage.setItem(AUTH_EMAIL_KEY,email);
-  const {error}=await sb.auth.resetPasswordForEmail(email,{redirectTo:AUTH_REDIRECT_URL});
+  const {error}=await sb.auth.resetPasswordForEmail(email,{redirectTo:RESET_REDIRECT_URL});
   if(error)throw error;
 }
 async function updatePassword(password){
@@ -220,14 +221,23 @@ async function updatePassword(password){
 async function recoverSessionFromUrl(){
   if(!sb)return null;
   const url=new URL(window.location.href);
-  const code=url.searchParams.get('code');
+  const search=url.searchParams;
+  const hash=new URLSearchParams(url.hash.replace(/^#/,''));
+  const code=search.get('code');
+  const tokenHash=search.get('token_hash');
+  const type=search.get('type')||hash.get('type')||'';
   if(code){
-    const {data,error}=await sb.auth.exchangeCodeForSession(window.location.href);
+    const {data,error}=await sb.auth.exchangeCodeForSession(code);
     if(error)throw error;
     window.history.replaceState({},document.title,AUTH_REDIRECT_URL);
     return data?.session||null;
   }
-  const hash=new URLSearchParams(window.location.hash.replace(/^#/,''));
+  if(tokenHash&&type){
+    const {data,error}=await sb.auth.verifyOtp({token_hash:tokenHash,type});
+    if(error)throw error;
+    window.history.replaceState({},document.title,AUTH_REDIRECT_URL);
+    return data?.session||null;
+  }
   const access_token=hash.get('access_token');
   const refresh_token=hash.get('refresh_token');
   if(access_token&&refresh_token){
@@ -261,22 +271,34 @@ async function saveRemoteProfile(user,state){
   if(error)throw error;
 }
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-const profileBackupKey=email=>`${PROFILE_BACKUP_PREFIX}${(email||'').trim().toLowerCase()}`;
-function loadLocalProfileBackup(email){
-  if(!email)return null;
+const profileBackupKey=key=>`${PROFILE_BACKUP_PREFIX}${String(key||'').trim().toLowerCase()}`;
+function sanitizeBackupState(state){
+  const payload={...state};
+  delete payload.showXPPopup;
+  delete payload.lastXPGain;
+  return payload;
+}
+function loadLocalProfileBackup(key){
+  if(!key)return null;
   try{
-    const raw=localStorage.getItem(profileBackupKey(email));
+    const raw=localStorage.getItem(profileBackupKey(key));
     return raw?JSON.parse(raw):null;
   }catch{return null;}
 }
-function saveLocalProfileBackup(email,state){
-  if(!email)return;
+function loadBestLocalProfileBackup(user){
+  if(!user)return null;
+  return loadLocalProfileBackup(user.id)||loadLocalProfileBackup(user.email)||null;
+}
+function saveLocalProfileBackup(key,state){
+  if(!key)return;
   try{
-    const payload={...state};
-    delete payload.showXPPopup;
-    delete payload.lastXPGain;
-    localStorage.setItem(profileBackupKey(email),JSON.stringify(payload));
+    localStorage.setItem(profileBackupKey(key),JSON.stringify(sanitizeBackupState(state)));
   }catch{}
+}
+function saveProfileBackups(user,state){
+  if(!user)return;
+  saveLocalProfileBackup(user.id,state);
+  saveLocalProfileBackup(user.email,state);
 }
 function getRecoveryType(){
   const url=new URL(window.location.href);
@@ -284,6 +306,7 @@ function getRecoveryType(){
   const hash=new URLSearchParams(url.hash.replace(/^#/,''));
   const searchType=search.get('type')||'';
   const hashType=hash.get('type')||'';
+  if(search.get('reset')==='1')return 'recovery';
   if(searchType==='recovery'||hashType==='recovery')return 'recovery';
   if(search.get('token_hash')&&((search.get('type')||'')==='recovery'))return 'recovery';
   if(hash.get('access_token')&&hashType==='recovery')return 'recovery';
@@ -1023,6 +1046,7 @@ function reducer(state,action){
     case 'SET_VIEW':return{...state,currentView:action.view,logPillar:action.logPillar||null};
     case 'SET_DRINK':return{...state,user:{...state.user,drinkType:action.drinkType}};
     case 'CLEAR_ERROR':return{...state,errorMessage:''};
+    case 'SET_ERROR':return{...state,errorMessage:action.message||''};
     case 'LOG_ACTIVITY':{
       if(action.log.date>td())return{...state,errorMessage:'Future dates are not allowed. You can only log today or a past date.'};
       const nl=[...state.logs,action.log];const nx=state.xp+action.log.xp;const ns=updStreaks(nl,state.streaks);const ng=calcGlow(nl,ns);const na=calcAvState(nl,ns,ng);
@@ -1065,8 +1089,8 @@ function App(){
   const[loadingMessage,setLoadingMessage]=useState(getLoadingCopy());
   const[showPasswordSavedToast,setShowPasswordSavedToast]=useState(false);
   const recoveryModeRef=useRef(false);
+  const saveTimerRef=useRef(null);
   const[state,dispatch]=useReducer(reducer,INIT_STATE);
-  const[lastSavedAt,setLastSavedAt]=useState(0);
 
   useEffect(()=>{
     let mounted=true;
@@ -1095,7 +1119,7 @@ function App(){
         if(!session?.user){setAuthScreenMode('password');setAuthPhase('auth');return;}
         setSessionUser(session.user);
         localStorage.setItem(AUTH_EMAIL_KEY,session.user.email||'');
-        const localBackup=loadLocalProfileBackup(session.user.email);
+        const localBackup=loadBestLocalProfileBackup(session.user);
         try{
           const [remote]=await Promise.all([loadRemoteProfile(session.user.id),wait(900)]);
           if(remote){dispatch({type:'LOAD_STATE',state:{...INIT_STATE,...remote}});setAuthPhase('app')}
@@ -1124,7 +1148,7 @@ function App(){
       setAuthPhase('loading');
       setLoadingMessage(getLoadingCopy());
       localStorage.setItem(AUTH_EMAIL_KEY,user.email||'');
-      const localBackup=loadLocalProfileBackup(user.email);
+      const localBackup=loadBestLocalProfileBackup(user);
       try{
         const [remote]=await Promise.all([loadRemoteProfile(user.id),wait(900)]);
         if(remote){dispatch({type:'LOAD_STATE',state:{...INIT_STATE,...remote}});setAuthPhase('app')}
@@ -1154,19 +1178,20 @@ function App(){
   },[showPasswordSavedToast]);
   useEffect(()=>{
     if(authPhase!=='app'||!sessionUser||!state.onboarded)return;
-    const now=Date.now();
-    if(now-lastSavedAt<600)return;
-    setLastSavedAt(now);
-    saveLocalProfileBackup(sessionUser.email,state);
-    saveRemoteProfile(sessionUser,state).catch(()=>dispatch({type:'CLEAR_ERROR'}));
-  },[state,authPhase,sessionUser,lastSavedAt]);
+    if(saveTimerRef.current)clearTimeout(saveTimerRef.current);
+    saveTimerRef.current=setTimeout(()=>{
+      saveProfileBackups(sessionUser,state);
+      saveRemoteProfile(sessionUser,state).catch(()=>dispatch({type:'SET_ERROR',message:'We could not sync your latest activity to your account yet. It is still saved on this device and will try again on your next session.'}));
+    },250);
+    return()=>{if(saveTimerRef.current)clearTimeout(saveTimerRef.current);};
+  },[state,authPhase,sessionUser]);
 
   const handleCreateProfile=async(data)=>{
     if(!sessionUser)return;
     const payload={...data,name:data.name.trim()||emailName(sessionUser.email)};
     dispatch({type:'INIT_USER',data:payload});
     const initialState={...INIT_STATE,...reducer(INIT_STATE,{type:'INIT_USER',data:payload})};
-    saveLocalProfileBackup(sessionUser.email,initialState);
+    saveProfileBackups(sessionUser,initialState);
     try{
       await saveRemoteProfile(sessionUser,initialState);
     }catch{}
