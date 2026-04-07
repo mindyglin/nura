@@ -272,6 +272,7 @@ async function saveRemoteProfile(user,state){
   if(error)throw error;
 }
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+function withTimeout(promise,ms){return Promise.race([promise,new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),ms))])}
 const profileBackupKey=key=>`${PROFILE_BACKUP_PREFIX}${String(key||'').trim().toLowerCase()}`;
 function sanitizeBackupState(state){
   const payload={...state};
@@ -326,21 +327,29 @@ function getUnlockCopy(p){
 }
 function buildStarterPlan(focus=[]){
   const chosen=focus.length?focus:['mental','physical'];
-  const rotation=[...chosen,...PILLARS.filter(p=>!chosen.includes(p))];
-  const cadence=[10,15,20,10,25,15,30];
-  return Array.from({length:7},(_,i)=>{
-    const pillar=rotation[i%rotation.length];
-    const options=DEF_ACTS.filter(a=>a.pillar===pillar);
-    const act=options[i%options.length];
-    return{
-      day:`Day ${i+1}`,
-      pillar,
-      title:act?.name||PCFG[pillar].name,
-      minimum:`${cadence[i]} minutes of ${act?.name?.toLowerCase()||PCFG[pillar].name.toLowerCase()}`,
-      stretch:`Pair it with one ${rotation[(i+1)%rotation.length]} reset if you have extra energy`,
-      unlock:getUnlockCopy(pillar),
-    };
-  });
+  const primary=chosen[0]||'mental',secondary=chosen[1]||'physical';
+  const others=PILLARS.filter(p=>!chosen.includes(p));
+  // A structured week: start gentle, build confidence, end strong
+  const blueprint=[
+    {pillar:primary,title:'Ground yourself',activity:'One thing to settle your mind or body',time:'10 min',action:`Start with the smallest version of ${PCFG[primary].name.toLowerCase()}. If it's meditation, sit for 5 breaths. If it's a walk, go around the block. The goal today is just to open the app and log one real thing.`,why:'Day 1 is about proving you can show up. Not about intensity.'},
+    {pillar:secondary,title:'Add a second pillar',activity:'Introduce your second focus area',time:'15 min',action:`Do one ${PCFG[secondary].name.toLowerCase()} activity today, plus repeat yesterday's ${PCFG[primary].name.toLowerCase()} win if you can. Two pillars lit up on one day starts building the pattern.`,why:'Stacking a second pillar creates momentum without overwhelm.'},
+    {pillar:primary,title:'Go a little deeper',activity:'Increase time or intensity slightly',time:'20 min',action:`Return to ${PCFG[primary].name.toLowerCase()} but push slightly further — longer duration, harder variation, or add notes about how it felt. Reflection turns a task into a practice.`,why:'Progression happens in small, deliberate increments.'},
+    {pillar:others[0]||'intellectual',title:'Explore something new',activity:'Try a pillar outside your comfort zone',time:'15 min',action:`Today is about curiosity. Pick one ${PCFG[others[0]||'intellectual'].name.toLowerCase()} activity you've never tried. Read 10 pages, sketch for 15 minutes, or try a new podcast. New pillars expand your definition of wellness.`,why:'Well-roundedness comes from gentle exploration, not perfection.'},
+    {pillar:secondary,title:'Build your rhythm',activity:'Combine two pillars in one session',time:'25 min',action:`Pair ${PCFG[secondary].name.toLowerCase()} with one other pillar today. Example: journal after a workout, or read after meditating. Stacking activities into a ritual makes them easier to repeat.`,why:'Rituals reduce friction. The less you have to decide, the more you do.'},
+    {pillar:others[1]||'creative',title:'Complete the circle',activity:'Touch all four pillars — even briefly',time:'20 min',action:`Today's challenge: log at least one activity from every pillar. They can be small — 5-minute meditation, a quick sketch, a short walk, one article. The point is showing range.`,why:'A Quad Stack day is the gold standard. Today you prove it's possible.'},
+    {pillar:primary,title:'Reflect and recommit',activity:'Review your week and set intentions',time:'15 min',action:`Journal or reflect on what worked this week. Which pillar felt easiest? Which one surprised you? Open the Stats view and look at your first week of data. Then log one activity in the pillar that needs the most love going forward.`,why:'Self-awareness is the real unlock. Data + reflection = lasting change.'},
+  ];
+  return blueprint.map((item,i)=>({
+    day:`Day ${i+1}`,
+    pillar:item.pillar,
+    title:item.title,
+    minimum:item.activity,
+    time:item.time,
+    action:item.action,
+    why:item.why,
+    stretch:`Bonus: add a ${PCFG[PILLARS.filter(p=>p!==item.pillar)[i%3]||'mental'].name.toLowerCase()} reset if you have extra energy`,
+    unlock:getUnlockCopy(item.pillar),
+  }));
 }
 function getEnvironmentState(score,streaks){
   const best=Math.max(...PILLARS.map(p=>streaks[p]?.current||0),0);
@@ -487,29 +496,66 @@ function GlowRing({score,size=72}){
     <div className="absolute inset-0 flex flex-col items-center justify-center"><span className="font-mono font-bold text-base text-ink">{score}</span></div></div>);
 }
 function XPPopup({xp,visible}){if(!visible)return null;return<div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 font-mono font-bold text-xl text-sage animate-xp-pop pointer-events-none">+{xp} XP 🌿</div>}
-function StarterPlanCard({plan,compact=false}){
+function StarterPlanCard({plan,dayIndex=0,logs=[],compact=false}){
+  const[expandedDay,setExpandedDay]=useState(null);
   if(!plan?.length)return null;
+  // Calculate which days have at least one matching-pillar log
+  const dayDone=plan.map(item=>{
+    const logsForPillar=logs.filter(l=>l.pillar===item.pillar);
+    return logsForPillar.length>0;
+  });
+  const completedCount=dayDone.filter(Boolean).length;
+  const currentDay=Math.min(dayIndex,6);
   return(
     <Card className={compact?'!p-3 !bg-white/70':'!bg-white/75'}>
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center justify-between mb-2">
         <div>
-          <p className="font-heading font-bold text-sm text-ink">7-Day Starter Plan</p>
-          <p className="text-[11px] text-inkMuted">A gentle week designed to rebuild momentum.</p>
+          <p className="font-heading font-bold text-sm text-ink">Your 7-Day Plan</p>
+          <p className="text-[11px] text-inkMuted">{compact?'Actionable steps to build your rhythm.':'Each day builds on the last. Tap a day for the full action.'}</p>
         </div>
-        <span className="text-[10px] font-mono text-sage bg-sageLight/70 px-2 py-1 rounded-full">Day 0</span>
+        <div className="flex flex-col items-end gap-1">
+          <span className="text-[10px] font-mono text-sage bg-sageLight/70 px-2 py-1 rounded-full">Day {currentDay+1} of 7</span>
+          <span className="text-[9px] text-inkMuted">{completedCount}/7 pillars hit</span>
+        </div>
       </div>
-      <div className="space-y-2">
-        {plan.slice(0,compact?3:7).map(item=>(
-          <div key={item.day} className="rounded-xl p-3" style={{background:PCFG[item.pillar].light}}>
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-xs font-semibold text-ink">{item.day} · {item.title}</p>
-              <span className="text-[10px] font-medium" style={{color:PCFG[item.pillar].color}}>{PCFG[item.pillar].name}</span>
-            </div>
-            <p className="text-[11px] text-inkSoft mt-1">{item.minimum}</p>
-            {!compact&&<p className="text-[11px] text-inkMuted mt-1">Unlock: {item.unlock}</p>}
-          </div>
-        ))}
+      {/* Progress dots */}
+      <div className="flex gap-1 mb-3">{plan.map((item,i)=>(
+        <div key={i} className="flex-1 h-1.5 rounded-full transition-all" style={{background:i<=currentDay?(dayDone[i]?PCFG[item.pillar].color:PCFG[item.pillar].light):'#E8ECE4'}}/>
+      ))}</div>
+      <div className="space-y-1.5">
+        {plan.slice(0,compact?3:7).map((item,i)=>{
+          const done=dayDone[i];const isActive=i===currentDay;const isExpanded=expandedDay===i;const isFuture=i>currentDay;
+          return(
+            <button key={item.day} onClick={()=>!compact&&setExpandedDay(isExpanded?null:i)} className={`w-full text-left rounded-xl p-3 transition-all border ${isActive?'ring-1 shadow-sm':''}  ${done?'opacity-80':''} ${isFuture&&!compact?'opacity-50':''}`}
+              style={{background:PCFG[item.pillar].light,borderColor:isActive?PCFG[item.pillar].color+'50':'transparent',ringColor:isActive?PCFG[item.pillar].color:'transparent'}}>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  {done?<span className="text-sage text-sm">✓</span>:<span className="text-sm">{PCFG[item.pillar].icon}</span>}
+                  <p className={`text-xs font-semibold ${done?'text-inkMuted line-through':'text-ink'}`}>{item.day} · {item.title}</p>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-mono" style={{color:PCFG[item.pillar].color}}>{item.time}</span>
+                  {!compact&&<span className="text-[10px] text-inkMuted">{isExpanded?'▲':'▼'}</span>}
+                </div>
+              </div>
+              <p className="text-[11px] text-inkSoft mt-1">{item.minimum}</p>
+              {isExpanded&&!compact&&(
+                <div className="mt-3 space-y-2 animate-slide-up">
+                  <div className="rounded-lg bg-white/60 p-2.5">
+                    <p className="text-[11px] font-semibold text-ink mb-1">What to do</p>
+                    <p className="text-[11px] text-inkSoft leading-5">{item.action}</p>
+                  </div>
+                  <div className="rounded-lg bg-white/40 p-2.5">
+                    <p className="text-[11px] font-semibold text-ink mb-1">Why this matters</p>
+                    <p className="text-[11px] text-inkMuted leading-5">{item.why}</p>
+                  </div>
+                </div>
+              )}
+            </button>
+          );
+        })}
       </div>
+      {compact&&<p className="text-[10px] text-inkMuted mt-2 text-center">Tap to see the full plan in your dashboard.</p>}
     </Card>
   );
 }
@@ -908,7 +954,7 @@ function Dashboard({state,dispatch,onChangeCup}){
           Change cup
         </button>
       </Card>
-      {todaysPlan&&<div className="mb-4"><StarterPlanCard plan={[todaysPlan]} compact={false}/></div>}
+      {state.starterPlan?.length>0&&(state.dayIndex||0)<7&&<div className="mb-4"><StarterPlanCard plan={state.starterPlan} dayIndex={state.dayIndex||0} logs={logs} compact={false}/></div>}
       {avatarState.decayDays>0&&<Card className="mb-4 !bg-sandLight/60 !border-sand/20"><p className="text-sm font-medium text-ink">Gentle accountability check-in</p><p className="text-xs text-inkSoft mt-1">{avatarState.decayDays===1?'You missed a day, and Nura noticed with a very slight dimming.':'A little slump has returned. One small win today will brighten your avatar again.'}</p></Card>}
       {state.lastUnlocked&&<Card className="mb-4 !bg-gradient-to-r !from-sandLight/80 !to-skyLight/70 !border-sage/20"><p className="text-sm font-bold text-ink">Milestone celebration</p><p className="text-xs text-inkSoft mt-1">You unlocked <span className="font-semibold">{state.lastUnlocked.name}</span>. Your avatar keeps evolving because you kept showing up.</p></Card>}
       <div className="grid grid-cols-3 gap-2 mb-4">
@@ -942,8 +988,17 @@ function Dashboard({state,dispatch,onChangeCup}){
 function LogActivity({state,dispatch,pillar}){
   const[sp,setSP]=useState(pillar||'physical');const[sa,setSA]=useState(null);const[dur,setDur]=useState('');const[int,setInt]=useState('medium');const[notes,setNotes]=useState('');const[sc,setSC]=useState(false);const[cn,setCN]=useState('');const[cx,setCX]=useState(25);const[logDate,setLogDate]=useState(td());const[err,setErr]=useState('');
   const pa=state.activities.filter(a=>a.pillar===sp);
+  // Past-day limits: max 3 days back, max 4 activities per past day
+  const PAST_DAY_LIMIT=3;
+  const PAST_DAY_MAX_ACTIVITIES=4;
+  const minDate=(()=>{const d=new Date();d.setDate(d.getDate()-PAST_DAY_LIMIT);return fmtDate(d)})();
+  const isToday=logDate===td();
+  const pastDayLogCount=isToday?0:state.logs.filter(l=>l.date===logDate).length;
+  const pastDaySlotsLeft=isToday?Infinity:PAST_DAY_MAX_ACTIVITIES-pastDayLogCount;
   const handleLog=()=>{
     if(logDate>td()){setErr('You can only log today or past dates.');return;}
+    if(logDate<minDate){setErr(`You can only backfill up to ${PAST_DAY_LIMIT} days. Come back daily to keep your streak alive.`);return;}
+    if(!isToday&&pastDaySlotsLeft<=0){setErr(`You've used all ${PAST_DAY_MAX_ACTIVITIES} backfill slots for this day. Logging is unlimited for today only.`);return;}
     if(!sa&&!sc)return;const act=sc?null:state.activities.find(a=>a.id===sa);const xpB=sc?cx:(act?.xp||10);const xpM=int==='easy'?.8:int==='hard'?1.5:1;const xpE=Math.round(xpB*xpM);
     const le={id:uid(),activityId:sc?'custom-'+uid():sa,activityName:sc?cn:act?.name,pillar:sp,date:logDate,duration:dur?parseInt(dur):null,intensity:int,notes,xp:xpE};
     if(sc&&cn.trim())dispatch({type:'ADD_ACTIVITY',activity:{id:le.activityId,name:cn.trim(),pillar:sp,xp:cx,icon:PCFG[sp].icon,desc:'Custom',isCustom:true}});
@@ -960,7 +1015,9 @@ function LogActivity({state,dispatch,pillar}){
       </div>
       {sc&&<Card className="mb-4 space-y-3 animate-slide-up"><input type="text" value={cn} onChange={e=>setCN(e.target.value)} placeholder="Activity name" className="w-full px-3.5 py-2.5 rounded-lg border border-border focus:border-sage focus:ring-1 focus:ring-sage/20 focus:outline-none text-sm" autoFocus/><div className="flex gap-1.5">{[{v:10,l:'10 XP'},{v:25,l:'25 XP'},{v:50,l:'50 XP'},{v:100,l:'100 XP'}].map(o=><button key={o.v} onClick={()=>setCX(o.v)} className={`flex-1 py-2 rounded-lg text-xs font-medium transition-all ${cx===o.v?'bg-sage text-white':'bg-surfaceAlt text-inkSoft'}`}>{o.l}</button>)}</div></Card>}
       {(sa||(sc&&cn.trim()))&&<Card className="space-y-3 mb-4 animate-slide-up">
-        <div><label className="text-xs font-medium text-inkMuted block mb-1.5">Date</label><input type="date" value={logDate} max={td()} onChange={e=>setLogDate(e.target.value)} className="w-full px-3.5 py-2.5 rounded-lg border border-border focus:border-sage focus:outline-none text-sm bg-surface"/></div>
+        <div><label className="text-xs font-medium text-inkMuted block mb-1.5">Date</label><input type="date" value={logDate} min={minDate} max={td()} onChange={e=>{setLogDate(e.target.value);setErr('')}} className="w-full px-3.5 py-2.5 rounded-lg border border-border focus:border-sage focus:outline-none text-sm bg-surface"/>
+        {!isToday&&<p className={`text-[11px] mt-1.5 ${pastDaySlotsLeft<=1?'text-red-500 font-medium':'text-inkMuted'}`}>{pastDaySlotsLeft>0?`Backfill: ${pastDaySlotsLeft} of ${PAST_DAY_MAX_ACTIVITIES} slots remaining for this day`:`No backfill slots left for this day`}</p>}
+        {isToday&&<p className="text-[11px] mt-1.5 text-sage">Today — unlimited logging</p>}</div>
         <div><label className="text-xs font-medium text-inkMuted block mb-1.5">Intensity</label><div className="flex gap-1.5">{['easy','medium','hard'].map(i=><button key={i} onClick={()=>setInt(i)} className={`flex-1 py-2 rounded-lg text-xs font-medium capitalize transition-all ${int===i?'bg-sage text-white':'bg-surfaceAlt text-inkSoft'}`}>{i}</button>)}</div></div>
         <div><label className="text-xs font-medium text-inkMuted block mb-1.5">Duration (optional)</label><input type="number" value={dur} onChange={e=>setDur(e.target.value)} placeholder="Minutes" className="w-full px-3.5 py-2.5 rounded-lg border border-border focus:border-sage focus:outline-none text-sm"/></div>
         <div><label className="text-xs font-medium text-inkMuted block mb-1.5">Notes (optional)</label><textarea value={notes} onChange={e=>setNotes(e.target.value)} placeholder="How did it go?" className="w-full px-3.5 py-2.5 rounded-lg border border-border focus:border-sage focus:outline-none text-sm resize-none" rows={2}/></div>
@@ -991,7 +1048,7 @@ function ActivitiesView({state,dispatch}){
       <div className="space-y-1.5 mb-4">{pa.map(act=><div key={act.id} className="flex items-center gap-3 p-3.5 bg-surface rounded-xl border border-border group"><span className="text-lg">{act.icon}</span><div className="flex-1 min-w-0"><p className="font-medium text-sm text-ink truncate">{act.name}{act.isCustom&&<span className="text-[10px] text-inkMuted ml-1.5">custom</span>}</p><p className="text-xs text-inkMuted truncate">{act.desc}</p></div><span className="font-mono text-xs" style={{color:PCFG[ap].color}}>{act.xp}</span><button onClick={()=>openEdit(act)} className="w-7 h-7 rounded-lg bg-surfaceAlt flex items-center justify-center text-inkMuted hover:bg-sageLight hover:text-sage text-xs opacity-50 group-hover:opacity-100">✎</button><button onClick={()=>setConfirmDel(act.id)} className="w-7 h-7 rounded-lg bg-surfaceAlt flex items-center justify-center text-inkMuted hover:bg-red-50 hover:text-red-500 text-xs opacity-50 group-hover:opacity-100">×</button></div>)}</div>
       <button onClick={()=>setShowAdd(true)} className="w-full p-3.5 rounded-xl border border-dashed border-border text-inkMuted hover:border-sage hover:text-sage transition-all text-sm font-medium">+ Add Activity</button>
       <Modal open={showAdd} onClose={()=>setShowAdd(false)} title="New Activity"><div className="space-y-3"><input type="text" value={nn} onChange={e=>setNN(e.target.value)} placeholder="Name" className="w-full px-3.5 py-2.5 rounded-lg border border-border focus:border-sage focus:outline-none text-sm" autoFocus/><input type="text" value={nd} onChange={e=>setND(e.target.value)} placeholder="Description" className="w-full px-3.5 py-2.5 rounded-lg border border-border focus:border-sage focus:outline-none text-sm"/><div className="flex gap-1.5">{[10,25,50,100].map(v=><button key={v} onClick={()=>setNX(v)} className={`flex-1 py-2 rounded-lg text-xs font-medium ${nx===v?'bg-sage text-white':'bg-surfaceAlt text-inkSoft'}`}>{v} XP</button>)}</div><Btn onClick={handleAdd} disabled={!nn.trim()} className="w-full" size="md">Add</Btn></div></Modal>
-      <Modal open={!!editAct} onClose={()=>setEditAct(null)} title="Edit Activity"><div className="space-y-3"><input type="text" value={en} onChange={e=>setEN(e.target.value)} placeholder="Name" className="w-full px-3.5 py-2.5 rounded-lg border border-border focus:border-sage focus:outline-none text-sm"/><input type="text" value={ed} onChange={e=>setED(e.target.value)} placeholder="Description" className="w-full px-3.5 py-2.5 rounded-lg border border-border focus:border-sage focus:outline-none text-sm"/><div><label className="text-xs font-medium text-inkMuted block mb-1.5">Icon (emoji)</label><select value={ei} onChange={e=>setEI(e.target.value)} className="w-full px-3 py-2.5 rounded-lg border border-border focus:border-sage focus:outline-none text-sm bg-surface">{EMOJI_OPTIONS.map(emoji=><option key={emoji} value={emoji}>{emoji}</option>)}</select></div><div className="grid grid-cols-6 gap-1.5 rounded-xl bg-surfaceAlt/60 p-2">{EMOJI_OPTIONS.map(emoji=><button key={emoji} onClick={()=>setEI(emoji)} className={`h-10 rounded-lg text-lg transition-all ${ei===emoji?'bg-white ring-1 ring-sage shadow-sm':'hover:bg-white/70'}`}>{emoji}</button>)}</div><div className="flex gap-1.5">{[10,25,50,100].map(v=><button key={v} onClick={()=>setEX(v)} className={`flex-1 py-2 rounded-lg text-xs font-medium ${ex===v?'bg-sage text-white':'bg-surfaceAlt text-inkSoft'}`}>{v} XP</button>)}</div><div className="flex gap-2"><Btn onClick={handleEdit} disabled={!en.trim()} className="flex-1" size="md">Save</Btn><Btn onClick={()=>setConfirmDel(editAct?.id)} variant="danger" size="md">Delete</Btn></div></div></Modal>
+      <Modal open={!!editAct} onClose={()=>setEditAct(null)} title="Edit Activity"><div className="space-y-3"><input type="text" value={en} onChange={e=>setEN(e.target.value)} placeholder="Name" className="w-full px-3.5 py-2.5 rounded-lg border border-border focus:border-sage focus:outline-none text-sm"/><input type="text" value={ed} onChange={e=>setED(e.target.value)} placeholder="Description" className="w-full px-3.5 py-2.5 rounded-lg border border-border focus:border-sage focus:outline-none text-sm"/><div><label className="text-xs font-medium text-inkMuted block mb-1.5">Icon (emoji)</label><select value={ei} onChange={e=>setEI(e.target.value)} className="w-full px-3 py-2.5 rounded-lg border border-border focus:border-sage focus:outline-none text-sm bg-surface appearance-none cursor-pointer" style={{fontSize:'1.1rem'}}>{EMOJI_OPTIONS.map(emoji=><option key={emoji} value={emoji}>{emoji}</option>)}</select></div><div className="flex gap-1.5">{[10,25,50,100].map(v=><button key={v} onClick={()=>setEX(v)} className={`flex-1 py-2 rounded-lg text-xs font-medium ${ex===v?'bg-sage text-white':'bg-surfaceAlt text-inkSoft'}`}>{v} XP</button>)}</div><div className="flex gap-2"><Btn onClick={handleEdit} disabled={!en.trim()} className="flex-1" size="md">Save</Btn><Btn onClick={()=>setConfirmDel(editAct?.id)} variant="danger" size="md">Delete</Btn></div></div></Modal>
       <Modal open={!!confirmDel} onClose={()=>setConfirmDel(null)} title="Remove Activity?"><p className="text-sm text-inkSoft mb-4">Past logs won't be affected.</p><div className="flex gap-2"><Btn onClick={()=>setConfirmDel(null)} variant="secondary" className="flex-1" size="md">Cancel</Btn><Btn onClick={()=>handleDel(confirmDel)} variant="danger" className="flex-1" size="md">Remove</Btn></div></Modal>
     </div>
   );
@@ -1054,6 +1111,9 @@ function reducer(state,action){
     case 'SET_ERROR':return{...state,errorMessage:action.message||''};
     case 'LOG_ACTIVITY':{
       if(action.log.date>td())return{...state,errorMessage:'Future dates are not allowed. You can only log today or a past date.'};
+      const pastMin=(()=>{const d=new Date();d.setDate(d.getDate()-3);return fmtDate(d)})();
+      if(action.log.date<pastMin)return{...state,errorMessage:'You can only backfill up to 3 days. Show up daily to keep your streak alive.'};
+      if(action.log.date!==td()&&state.logs.filter(l=>l.date===action.log.date).length>=4)return{...state,errorMessage:'You have used all 4 backfill slots for that day.'};
       const nl=[...state.logs,action.log];const nx=state.xp+action.log.xp;const ns=updStreaks(nl,state.streaks);const ng=calcGlow(nl,ns);const na=calcAvState(nl,ns,ng);
       const tl=nl.filter(l=>l.date===td());const tp=new Set(tl.map(l=>l.pillar));let bx=0;const ptp=new Set(state.logs.filter(l=>l.date===td()).map(l=>l.pillar));
       if(tp.size>=4&&ptp.size<4)bx+=50;else if(tp.size>=3&&ptp.size<3)bx+=25;
@@ -1094,6 +1154,7 @@ function App(){
   const[loadingMessage,setLoadingMessage]=useState(getLoadingCopy());
   const[showPasswordSavedToast,setShowPasswordSavedToast]=useState(false);
   const recoveryModeRef=useRef(false);
+  const bootDoneRef=useRef(false);
   const saveTimerRef=useRef(null);
   const[state,dispatch]=useReducer(reducer,INIT_STATE);
 
@@ -1125,22 +1186,37 @@ function App(){
         setSessionUser(session.user);
         localStorage.setItem(AUTH_EMAIL_KEY,session.user.email||'');
         const localBackup=loadBestLocalProfileBackup(session.user);
+        // If we have a local backup, use it immediately instead of waiting for remote
+        if(localBackup){
+          dispatch({type:'LOAD_STATE',state:{...INIT_STATE,...localBackup}});
+          setAuthPhase('app');
+          // Sync remote in background without blocking
+          setTimeout(()=>loadRemoteProfile(session.user.id).then(remote=>{if(remote)dispatch({type:'LOAD_STATE',state:{...INIT_STATE,...remote}})}).catch(()=>{}),1000);
+          return;
+        }
+        // No local backup, try remote with timeout
         try{
-          const [remote]=await Promise.all([loadRemoteProfile(session.user.id),wait(900)]);
+          const [remote]=await Promise.all([withTimeout(loadRemoteProfile(session.user.id),5000),wait(900)]);
           if(remote){dispatch({type:'LOAD_STATE',state:{...INIT_STATE,...remote}});setAuthPhase('app')}
-          else if(localBackup){dispatch({type:'LOAD_STATE',state:{...INIT_STATE,...localBackup}});setAuthPhase('app')}
           else{setAuthPhase('onboarding')}
         }catch{
-          if(localBackup){dispatch({type:'LOAD_STATE',state:{...INIT_STATE,...localBackup}});setAuthPhase('app')}
-          else{setAuthPhase('onboarding');}
+          setAuthPhase('onboarding');
         }
       }catch{
         if(mounted)setAuthPhase('auth');
       }
-    })().finally(()=>clearTimeout(bootFallback));
+      bootDoneRef.current=true;
+    })();
     const {data:{subscription}}=AUTH_READY?sb.auth.onAuthStateChange(async(event,session)=>{
       const user=session?.user||null;
       if(event==='PASSWORD_RECOVERY')recoveryModeRef.current=true;
+      // Skip events that boot already handled — this prevents the race condition
+      // where INITIAL_SESSION resets authPhase to 'loading' after boot finishes
+      // SIGNED_IN happens after magic link/password login, but boot has likely already loaded the profile
+      if(event==='INITIAL_SESSION'||event==='TOKEN_REFRESHED'||event==='USER_UPDATED'||event==='SIGNED_IN'){
+        if(user)setSessionUser(user);
+        return;
+      }
       setSessionUser(user);
       if(!user){dispatch({type:'LOAD_STATE',state:INIT_STATE});setAuthScreenMode('password');setAuthPhase('auth');return;}
       if(recoveryModeRef.current||event==='PASSWORD_RECOVERY'){
@@ -1150,20 +1226,27 @@ function App(){
         setAuthPhase('auth');
         return;
       }
-      setAuthPhase('loading');
-      setLoadingMessage(getLoadingCopy());
       localStorage.setItem(AUTH_EMAIL_KEY,user.email||'');
       const localBackup=loadBestLocalProfileBackup(user);
+      // Prefer local backup over waiting for remote — shows app faster
+      if(localBackup){
+        dispatch({type:'LOAD_STATE',state:{...INIT_STATE,...localBackup}});
+        setAuthPhase('app');
+        // Sync remote in background
+        setTimeout(()=>loadRemoteProfile(user.id).then(remote=>{if(remote)dispatch({type:'LOAD_STATE',state:{...INIT_STATE,...remote}})}).catch(()=>{}),1000);
+        return;
+      }
+      // No local backup, load from remote
+      setAuthPhase('loading');
+      setLoadingMessage(getLoadingCopy());
       try{
-        const [remote]=await Promise.all([loadRemoteProfile(user.id),wait(900)]);
+        const [remote]=await Promise.all([withTimeout(loadRemoteProfile(user.id),5000),wait(900)]);
         if(remote){dispatch({type:'LOAD_STATE',state:{...INIT_STATE,...remote}});setAuthPhase('app')}
-        else if(localBackup){dispatch({type:'LOAD_STATE',state:{...INIT_STATE,...localBackup}});setAuthPhase('app')}
         else{setAuthPhase('onboarding')}
       }catch{
-        if(localBackup){dispatch({type:'LOAD_STATE',state:{...INIT_STATE,...localBackup}});setAuthPhase('app')}
-        else{setAuthPhase('onboarding');}
+        setAuthPhase('onboarding');
       }
-    }):{data:{subscription:{unsubscribe(){}}}};
+    }):{data:{subscription:{unsubscribe:()=>{}}}};
     return()=>{mounted=false;clearTimeout(bootFallback);subscription.unsubscribe();};
   },[]);
 
