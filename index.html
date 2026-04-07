@@ -258,18 +258,31 @@ async function signOutRemote(){
   window.history.replaceState({},document.title,AUTH_REDIRECT_URL);
 }
 async function loadRemoteProfile(userId){
-  if(!sb)return null;
-  const {data,error}=await sb.from('nura_profiles').select('profile_data').eq('user_id',userId).maybeSingle();
-  if(error)throw error;
-  return data?.profile_data||null;
+  if(!sb){console.warn('Supabase not initialized');return null;}
+  try{
+    const {data,error}=await sb.from('nura_profiles').select('profile_data').eq('user_id',userId).maybeSingle();
+    if(error){console.error('Supabase load error:',error);throw error;}
+    if(data?.profile_data){console.log('Loaded profile from Supabase:',{logsCount:data.profile_data.logs?.length||0,xp:data.profile_data.xp});}
+    else{console.log('No profile found in Supabase');}
+    return data?.profile_data||null;
+  }catch(err){
+    console.error('Failed to load profile:',err);
+    throw err;
+  }
 }
 async function saveRemoteProfile(user,state){
   if(!sb||!user)return;
   const payload={...state};
   delete payload.showXPPopup;
   delete payload.lastXPGain;
-  const {error}=await sb.from('nura_profiles').upsert({user_id:user.id,email:user.email,profile_data:payload,updated_at:new Date().toISOString()},{onConflict:'user_id'});
-  if(error)throw error;
+  try{
+    const {data,error}=await sb.from('nura_profiles').upsert({user_id:user.id,email:user.email,profile_data:payload,updated_at:new Date().toISOString()},{onConflict:'user_id'});
+    if(error){console.error('Supabase save error:',error);throw error;}
+    console.log('Profile saved to Supabase successfully');
+  }catch(err){
+    console.error('Failed to save profile:',err);
+    throw err;
+  }
 }
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 function withTimeout(promise,ms){return Promise.race([promise,new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),ms))])}
@@ -331,13 +344,13 @@ function buildStarterPlan(focus=[]){
   const others=PILLARS.filter(p=>!chosen.includes(p));
   // A structured week: start gentle, build confidence, end strong
   const blueprint=[
-    {pillar:primary,title:'Ground yourself',activity:'One thing to settle your mind or body',time:'10 min',action:`Start with the smallest version of ${PCFG[primary].name.toLowerCase()}. If it's meditation, sit for 5 breaths. If it's a walk, go around the block. The goal today is just to open the app and log one real thing.`,why:'Day 1 is about proving you can show up. Not about intensity.'},
-    {pillar:secondary,title:'Add a second pillar',activity:'Introduce your second focus area',time:'15 min',action:`Do one ${PCFG[secondary].name.toLowerCase()} activity today, plus repeat yesterday's ${PCFG[primary].name.toLowerCase()} win if you can. Two pillars lit up on one day starts building the pattern.`,why:'Stacking a second pillar creates momentum without overwhelm.'},
-    {pillar:primary,title:'Go a little deeper',activity:'Increase time or intensity slightly',time:'20 min',action:`Return to ${PCFG[primary].name.toLowerCase()} but push slightly further — longer duration, harder variation, or add notes about how it felt. Reflection turns a task into a practice.`,why:'Progression happens in small, deliberate increments.'},
-    {pillar:others[0]||'intellectual',title:'Explore something new',activity:'Try a pillar outside your comfort zone',time:'15 min',action:`Today is about curiosity. Pick one ${PCFG[others[0]||'intellectual'].name.toLowerCase()} activity you've never tried. Read 10 pages, sketch for 15 minutes, or try a new podcast. New pillars expand your definition of wellness.`,why:'Well-roundedness comes from gentle exploration, not perfection.'},
-    {pillar:secondary,title:'Build your rhythm',activity:'Combine two pillars in one session',time:'25 min',action:`Pair ${PCFG[secondary].name.toLowerCase()} with one other pillar today. Example: journal after a workout, or read after meditating. Stacking activities into a ritual makes them easier to repeat.`,why:'Rituals reduce friction. The less you have to decide, the more you do.'},
-    {pillar:others[1]||'creative',title:'Complete the circle',activity:'Touch all four pillars — even briefly',time:'20 min',action:`Today's challenge: log at least one activity from every pillar. They can be small — 5-minute meditation, a quick sketch, a short walk, one article. The point is showing range.`,why:'A Quad Stack day is the gold standard. Today you prove it\'s possible.'},
-    {pillar:primary,title:'Reflect and recommit',activity:'Review your week and set intentions',time:'15 min',action:`Journal or reflect on what worked this week. Which pillar felt easiest? Which one surprised you? Open the Stats view and look at your first week of data. Then log one activity in the pillar that needs the most love going forward.`,why:'Self-awareness is the real unlock. Data + reflection = lasting change.'},
+    {pillar:primary,title:'Ground yourself',activity:'One thing to settle your mind or body',time:'10 min',action:`Start with the smallest version of ${PCFG[primary].name.toLowerCase()}. If it's meditation, sit for 5 breaths. If it's a walk, go around the block. If it's exercise, do 5 push-ups. If it's creative work, sketch one line. The goal today is just to open the app and log one real thing.`,why:'Consistency matters more than intensity - research shows 66 days to form a habit, starting with tiny wins.'},
+    {pillar:secondary,title:'Add a second pillar',activity:'Introduce your second focus area',time:'15 min',action:`Do one ${PCFG[secondary].name.toLowerCase()} activity today, plus repeat yesterday's ${PCFG[primary].name.toLowerCase()} win if you can. Examples: if you walked yesterday, walk again and meditate today. Two pillars lit up on one day starts building the pattern.`,why:'Pairing habits leverages keystone effects - one success triggers motivation for the next (Duhigg, Atomic Habits).'},
+    {pillar:primary,title:'Go a little deeper',activity:'Increase time or intensity slightly',time:'20 min',action:`Return to ${PCFG[primary].name.toLowerCase()} but push slightly further - longer duration, harder variation, or add notes about how it felt. Examples: 5 breaths to 10 breaths, or one lap to two laps. Reflection turns a task into a practice.`,why:'Progressive overload drives adaptation and prevents plateaus in physical and mental performance.'},
+    {pillar:others[0]||'intellectual',title:'Explore something new',activity:'Try a pillar outside your comfort zone',time:'15 min',action:`Today is about curiosity. Pick one ${PCFG[others[0]||'intellectual'].name.toLowerCase()} activity you've never tried. Examples: read 10 pages of something new, listen to a podcast, watch a documentary, or learn one new fact. New pillars expand your definition of wellness.`,why:'Novelty activates dopamine systems and strengthens neuroplasticity - critical for learning and resilience.'},
+    {pillar:secondary,title:'Build your rhythm',activity:'Combine two pillars in one session',time:'25 min',action:`Pair ${PCFG[secondary].name.toLowerCase()} with one other pillar today. Examples: journal after a workout, listen to a podcast while walking, sketch after meditating, or discuss what you read with a friend. Stacking activities into a ritual makes them easier to repeat.`,why:'Habit stacking increases adherence by 91% compared to willpower alone (BJ Fogg).'},
+    {pillar:others[1]||'creative',title:'Complete the circle',activity:'Touch all four pillars - even briefly',time:'20 min',action:`Today's challenge: log at least one activity from every pillar. They can be small - 5-minute meditation, a quick sketch or doodle, a short walk around the block, read one article. The point is showing range and proving you can balance all dimensions.`,why:'Cross-domain engagement activates multiple neural networks and creates synergistic benefits for cognition.'},
+    {pillar:primary,title:'Reflect and recommit',activity:'Review your week and set intentions',time:'15 min',action:`Journal or reflect on what worked this week. Questions: Which pillar felt easiest? Which one surprised you? What was the smallest win? Open the Stats view and look at your first week of data. Then log one final activity in the pillar that needs the most love going forward.`,why:'Metacognition strengthens habit formation by 25% and increases long-term behavior change success.'},
   ];
   return blueprint.map((item,i)=>({
     day:`Day ${i+1}`,
@@ -1128,7 +1141,7 @@ function reducer(state,action){
     case 'ADD_ACTIVITY':if(state.activities.find(a=>a.id===action.activity.id))return state;return{...state,activities:[...state.activities,action.activity]};
     case 'EDIT_ACTIVITY':return{...state,activities:state.activities.map(a=>a.id===action.id?{...a,...action.updates}:a)};
     case 'REMOVE_ACTIVITY':return{...state,activities:state.activities.filter(a=>a.id!==action.id)};
-    case 'LOAD_STATE':return{...action.state,showXPPopup:false};
+    case 'LOAD_STATE':{const loaded={...action.state,showXPPopup:false};return{...loaded,starterPlan:buildStarterPlan(loaded.depletedPillars||['mental','physical'])}};
     default:return state;
   }
 }
@@ -1250,6 +1263,11 @@ function App(){
   },[]);
 
   useEffect(()=>{if(state.showXPPopup){const t=setTimeout(()=>dispatch({type:'HIDE_XP_POPUP'}),1500);return()=>clearTimeout(t)}},[state.showXPPopup]);
+  useEffect(()=>{
+    if(authPhase==='app'&&sessionUser&&state.onboarded&&state.logs.length>0){
+      saveRemoteProfile(sessionUser,state).catch(err=>dispatch({type:'SET_ERROR',message:'Activity sync pending — will retry when connection restores.'}));
+    }
+  },[state.logs,authPhase,sessionUser,state.onboarded]);
   useEffect(()=>{
     if(authPhase!=='loading'){setLoadingProgress(100);return;}
     setLoadingProgress(8);
