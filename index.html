@@ -336,7 +336,7 @@ function buildStarterPlan(focus=[]){
     {pillar:primary,title:'Go a little deeper',activity:'Increase time or intensity slightly',time:'20 min',action:`Return to ${PCFG[primary].name.toLowerCase()} but push slightly further — longer duration, harder variation, or add notes about how it felt. Reflection turns a task into a practice.`,why:'Progression happens in small, deliberate increments.'},
     {pillar:others[0]||'intellectual',title:'Explore something new',activity:'Try a pillar outside your comfort zone',time:'15 min',action:`Today is about curiosity. Pick one ${PCFG[others[0]||'intellectual'].name.toLowerCase()} activity you've never tried. Read 10 pages, sketch for 15 minutes, or try a new podcast. New pillars expand your definition of wellness.`,why:'Well-roundedness comes from gentle exploration, not perfection.'},
     {pillar:secondary,title:'Build your rhythm',activity:'Combine two pillars in one session',time:'25 min',action:`Pair ${PCFG[secondary].name.toLowerCase()} with one other pillar today. Example: journal after a workout, or read after meditating. Stacking activities into a ritual makes them easier to repeat.`,why:'Rituals reduce friction. The less you have to decide, the more you do.'},
-    {pillar:others[1]||'creative',title:'Complete the circle',activity:'Touch all four pillars — even briefly',time:'20 min',action:`Today's challenge: log at least one activity from every pillar. They can be small — 5-minute meditation, a quick sketch, a short walk, one article. The point is showing range.`,why:'A Quad Stack day is the gold standard. Today you prove it's possible.'},
+    {pillar:others[1]||'creative',title:'Complete the circle',activity:'Touch all four pillars — even briefly',time:'20 min',action:`Today's challenge: log at least one activity from every pillar. They can be small — 5-minute meditation, a quick sketch, a short walk, one article. The point is showing range.`,why:'A Quad Stack day is the gold standard. Today you prove it\'s possible.'},
     {pillar:primary,title:'Reflect and recommit',activity:'Review your week and set intentions',time:'15 min',action:`Journal or reflect on what worked this week. Which pillar felt easiest? Which one surprised you? Open the Stats view and look at your first week of data. Then log one activity in the pillar that needs the most love going forward.`,why:'Self-awareness is the real unlock. Data + reflection = lasting change.'},
   ];
   return blueprint.map((item,i)=>({
@@ -1020,7 +1020,7 @@ function LogActivity({state,dispatch,pillar}){
         {isToday&&<p className="text-[11px] mt-1.5 text-sage">Today — unlimited logging</p>}</div>
         <div><label className="text-xs font-medium text-inkMuted block mb-1.5">Intensity</label><div className="flex gap-1.5">{['easy','medium','hard'].map(i=><button key={i} onClick={()=>setInt(i)} className={`flex-1 py-2 rounded-lg text-xs font-medium capitalize transition-all ${int===i?'bg-sage text-white':'bg-surfaceAlt text-inkSoft'}`}>{i}</button>)}</div></div>
         <div><label className="text-xs font-medium text-inkMuted block mb-1.5">Duration (optional)</label><input type="number" value={dur} onChange={e=>setDur(e.target.value)} placeholder="Minutes" className="w-full px-3.5 py-2.5 rounded-lg border border-border focus:border-sage focus:outline-none text-sm"/></div>
-        <div><label className="text-xs font-medium text-inkMuted block mb-1.5">Notes (optional)</label><textarea value={notes} onChange={e=>setNotes(e.target.value)} placeholder="How did it go?" className="w-full px-3.5 py-2.5 rounded-lg border border-border focus:border-sage focus:outline-none text-sm resize-none" rows={2}/></div>
+        <div><label className="text-xs font-medium text-inkMuted block mb-1.5">Notes (optional)</label><textarea value={notes} onChange={e=>setNotes(e.target.value)} placeholder="How did it go?" className="w-full px-3.5 py-2.5 rounded-lg border border-border focus:border-sage focus:outline-none text-sm resize-none" rows={2}></textarea></div>
         <Btn onClick={handleLog} className="w-full" size="lg">Log Activity 🌿</Btn>
       </Card>}
     </div>
@@ -1212,8 +1212,7 @@ function App(){
       if(event==='PASSWORD_RECOVERY')recoveryModeRef.current=true;
       // Skip events that boot already handled — this prevents the race condition
       // where INITIAL_SESSION resets authPhase to 'loading' after boot finishes
-      // SIGNED_IN happens after magic link/password login, but boot has likely already loaded the profile
-      if(event==='INITIAL_SESSION'||event==='TOKEN_REFRESHED'||event==='USER_UPDATED'||event==='SIGNED_IN'){
+      if(event==='INITIAL_SESSION'||event==='TOKEN_REFRESHED'||event==='USER_UPDATED'){
         if(user)setSessionUser(user);
         return;
       }
