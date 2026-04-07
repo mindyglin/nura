@@ -260,10 +260,14 @@ async function signOutRemote(){
 async function loadRemoteProfile(userId){
   if(!sb){console.warn('Supabase not initialized');return null;}
   try{
+    console.log('Loading profile for user:',userId);
     const {data,error}=await sb.from('nura_profiles').select('profile_data').eq('user_id',userId).maybeSingle();
     if(error){console.error('Supabase load error:',error);throw error;}
-    if(data?.profile_data){console.log('Loaded profile from Supabase:',{logsCount:data.profile_data.logs?.length||0,xp:data.profile_data.xp});}
-    else{console.log('No profile found in Supabase');}
+    if(data?.profile_data){
+      console.log('Loaded profile from Supabase:',{logsCount:data.profile_data.logs?.length||0,xp:data.profile_data.xp,hasActivities:data.profile_data.activities?.length||0});
+      console.log('Full profile data:',data.profile_data);
+    }
+    else{console.log('No profile found in Supabase for user',userId);}
     return data?.profile_data||null;
   }catch(err){
     console.error('Failed to load profile:',err);
@@ -271,16 +275,20 @@ async function loadRemoteProfile(userId){
   }
 }
 async function saveRemoteProfile(user,state){
-  if(!sb||!user)return;
+  if(!sb||!user){console.warn('Cannot save: Supabase or user not ready');return;}
   const payload={...state};
   delete payload.showXPPopup;
   delete payload.lastXPGain;
   try{
     const {data,error}=await sb.from('nura_profiles').upsert({user_id:user.id,email:user.email,profile_data:payload,updated_at:new Date().toISOString()},{onConflict:'user_id'});
-    if(error){console.error('Supabase save error:',error);throw error;}
+    if(error){
+      console.error('Supabase save error:',error);
+      const msg=error.message||error.code||'Unknown error';
+      throw new Error(`Supabase: ${msg}`);
+    }
     console.log('Profile saved to Supabase successfully');
   }catch(err){
-    console.error('Failed to save profile:',err);
+    console.error('Failed to save profile:',err.message);
     throw err;
   }
 }
@@ -1265,7 +1273,11 @@ function App(){
   useEffect(()=>{if(state.showXPPopup){const t=setTimeout(()=>dispatch({type:'HIDE_XP_POPUP'}),1500);return()=>clearTimeout(t)}},[state.showXPPopup]);
   useEffect(()=>{
     if(authPhase==='app'&&sessionUser&&state.onboarded&&state.logs.length>0){
-      saveRemoteProfile(sessionUser,state).catch(err=>dispatch({type:'SET_ERROR',message:'Activity sync pending — will retry when connection restores.'}));
+      saveRemoteProfile(sessionUser,state).catch(err=>{
+        const errMsg=err.message||'Connection failed';
+        console.error('Sync failed:',errMsg);
+        dispatch({type:'SET_ERROR',message:`Sync failed: ${errMsg}. Data is saved on this device.`});
+      });
     }
   },[state.logs,authPhase,sessionUser,state.onboarded]);
   useEffect(()=>{
