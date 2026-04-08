@@ -1207,20 +1207,24 @@ function App(){
         setSessionUser(session.user);
         localStorage.setItem(AUTH_EMAIL_KEY,session.user.email||'');
         const localBackup=loadBestLocalProfileBackup(session.user);
+        console.log('Boot: checking for local backup',{hasLocalBackup:!!localBackup,userId:session.user.id,email:session.user.email});
         // If we have a local backup, use it immediately instead of waiting for remote
         if(localBackup){
+          console.log('Boot: using local backup');
           dispatch({type:'LOAD_STATE',state:{...INIT_STATE,...localBackup}});
           setAuthPhase('app');
           // Sync remote in background without blocking
-          setTimeout(()=>loadRemoteProfile(session.user.id).then(remote=>{if(remote)dispatch({type:'LOAD_STATE',state:{...INIT_STATE,...remote}})}).catch(()=>{}),1000);
+          setTimeout(()=>loadRemoteProfile(session.user.id).then(remote=>{if(remote){console.log('Boot: remote sync succeeded, updating with remote data');dispatch({type:'LOAD_STATE',state:{...INIT_STATE,...remote}})}}).catch(err=>console.log('Boot: remote sync failed',err.message)),1000);
           return;
         }
         // No local backup, try remote with timeout
         try{
+          console.log('Boot: no local backup, loading from remote');
           const [remote]=await Promise.all([withTimeout(loadRemoteProfile(session.user.id),5000),wait(900)]);
-          if(remote){dispatch({type:'LOAD_STATE',state:{...INIT_STATE,...remote}});setAuthPhase('app')}
-          else{setAuthPhase('onboarding')}
-        }catch{
+          if(remote){console.log('Boot: remote load succeeded');dispatch({type:'LOAD_STATE',state:{...INIT_STATE,...remote}});setAuthPhase('app')}
+          else{console.log('Boot: no remote data found, going to onboarding');setAuthPhase('onboarding')}
+        }catch(err){
+          console.log('Boot: remote load failed or timed out',err.message);
           setAuthPhase('onboarding');
         }
       }catch{
@@ -1272,14 +1276,15 @@ function App(){
 
   useEffect(()=>{if(state.showXPPopup){const t=setTimeout(()=>dispatch({type:'HIDE_XP_POPUP'}),1500);return()=>clearTimeout(t)}},[state.showXPPopup]);
   useEffect(()=>{
-    if(authPhase==='app'&&sessionUser&&state.onboarded&&state.logs.length>0){
+    if(authPhase==='app'&&sessionUser&&state.onboarded){
+      console.log('Sync trigger: logs=',state.logs.length,'activities=',state.activities.length);
       saveRemoteProfile(sessionUser,state).catch(err=>{
         const errMsg=err.message||'Connection failed';
         console.error('Sync failed:',errMsg);
         dispatch({type:'SET_ERROR',message:`Sync failed: ${errMsg}. Data is saved on this device.`});
       });
     }
-  },[state.logs,authPhase,sessionUser,state.onboarded]);
+  },[state.logs,state.activities,authPhase,sessionUser,state.onboarded]);
   useEffect(()=>{
     if(authPhase!=='loading'){setLoadingProgress(100);return;}
     setLoadingProgress(8);
