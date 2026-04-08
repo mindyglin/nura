@@ -1206,27 +1206,31 @@ function App(){
         if(!session?.user){setAuthScreenMode('password');setAuthPhase('auth');return;}
         setSessionUser(session.user);
         localStorage.setItem(AUTH_EMAIL_KEY,session.user.email||'');
-        const localBackup=loadBestLocalProfileBackup(session.user);
-        console.log('Boot: checking for local backup',{hasLocalBackup:!!localBackup,userId:session.user.id,email:session.user.email});
-        // If we have a local backup, use it immediately instead of waiting for remote
-        if(localBackup){
-          console.log('Boot: using local backup');
-          dispatch({type:'LOAD_STATE',state:{...INIT_STATE,...localBackup}});
+        // Always try remote first for cross-device sync, fall back to local only if remote fails
+        let remote=null;
+        try{
+          console.log('Boot: loading from Supabase');
+          remote=await withTimeout(loadRemoteProfile(session.user.id),5000);
+        }catch(err){
+          console.log('Boot: remote load failed, falling back to local backup');
+        }
+        if(remote){
+          console.log('Boot: using remote data from Supabase');
+          dispatch({type:'LOAD_STATE',state:{...INIT_STATE,...remote}});
           setAuthPhase('app');
-          // Sync remote in background without blocking
-          setTimeout(()=>loadRemoteProfile(session.user.id).then(remote=>{if(remote){console.log('Boot: remote sync succeeded, updating with remote data');dispatch({type:'LOAD_STATE',state:{...INIT_STATE,...remote}})}}).catch(err=>console.log('Boot: remote sync failed',err.message)),1000);
           return;
         }
-        // No local backup, try remote with timeout
-        try{
-          console.log('Boot: no local backup, loading from remote');
-          const [remote]=await Promise.all([withTimeout(loadRemoteProfile(session.user.id),5000),wait(900)]);
-          if(remote){console.log('Boot: remote load succeeded');dispatch({type:'LOAD_STATE',state:{...INIT_STATE,...remote}});setAuthPhase('app')}
-          else{console.log('Boot: no remote data found, going to onboarding');setAuthPhase('onboarding')}
-        }catch(err){
-          console.log('Boot: remote load failed or timed out',err.message);
-          setAuthPhase('onboarding');
+        // Remote failed, try local backup
+        const localBackup=loadBestLocalProfileBackup(session.user);
+        if(localBackup){
+          console.log('Boot: using local backup as fallback');
+          dispatch({type:'LOAD_STATE',state:{...INIT_STATE,...localBackup}});
+          setAuthPhase('app');
+          return;
         }
+        // No remote and no local backup - new user
+        console.log('Boot: no data found, going to onboarding');
+        setAuthPhase('onboarding');
       }catch{
         if(mounted)setAuthPhase('auth');
       }
