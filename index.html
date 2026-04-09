@@ -802,7 +802,7 @@ function DrinkPicker({value,onChange}){
       {DRINKS.map(d=>(
         <button key={d.id} onClick={()=>onChange(d.id)} className={`rounded-2xl border p-3 text-left transition-all ${value===d.id?'border-sage bg-sageLight/40 shadow-sm':'border-border hover:border-sage/30 bg-surface'}`}>
           <div className="flex items-center gap-2"><span className="text-xl">{d.emoji}</span><span className="font-semibold text-sm text-ink">{d.name}</span></div>
-          <p className="text-[11px] text-inkMuted mt-1">{d.id==='water'?'Clean, clear, grounded energy.':'A soft ritual cup for your daily momentum.'}</p>
+          <p className="text-[11px] text-inkMuted mt-1">{d.id==='matcha'?'The thoughtful, grounded morning meditative practice for sustained focus.':d.id==='coffee'?'The comforting, dependable catalyst to power you forward.':d.id==='tea'?'The mindful, ritualistic moment for calm contemplation.':d.id==='boba'?'The playful, textured escape for a joyful pause.':d.id==='water'?'The essential, purifying flow for clear, foundational energy.':d.id==='kombucha'?'The vibrant, living culture to harmonize and revitalize.':'The fresh, vibrant blend for a nourishing, creative boost.'}</p>
         </button>
       ))}
     </div>
@@ -1355,6 +1355,36 @@ function PieChart({data,size=200}){
   );
 }
 
+function ActivityTrendChart({logs}){
+  const l7=[];
+  for(let i=6;i>=0;i--){
+    const d=new Date();
+    d.setDate(d.getDate()-i);
+    const ds=fmtDate(d);
+    const count=logs.filter(l=>l.date===ds).length;
+    l7.push({date:ds,day:d.toLocaleDateString('en-US',{weekday:'short'}),count});
+  }
+  const maxCount=Math.max(...l7.map(d=>d.count),1);
+  const chartH=120,barW=100/7-1;
+  return(
+    <div className="w-full">
+      <div className="flex items-end justify-between h-32 gap-1 px-1">
+        {l7.map((day,i)=>(
+          <div key={i} className="flex-1 flex flex-col items-center gap-1">
+            <div className="w-full flex items-end justify-center" style={{height:`${chartH}px`}}>
+              <div className="w-full rounded-t-lg transition-all" style={{height:`${(day.count/maxCount)*chartH}px`,background:'#5E9E74',minHeight:day.count>0?'8px':'1px',opacity:day.count>0?1:0.2}}/>
+            </div>
+            <div className="text-center">
+              <p className="text-[9px] font-semibold text-ink">{day.count}</p>
+              <p className="text-[8px] text-inkMuted">{day.day}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function InsightsView({state}){
   const{logs,streaks,xp,activities}=state;
   const insights=getWeeklyInsights(logs,streaks);
@@ -1372,6 +1402,8 @@ function InsightsView({state}){
           <div className="text-center"><p className="font-mono text-2xl font-bold" style={{color:insights.xpTrend>0?'#22c55e':'#ef4444'}}>{insights.xpTrend>0?'+':''}{insights.xpTrend}%</p><p className="text-[10px] text-inkMuted">vs last week</p></div>
         </div>
       </Card>
+
+      <Card className="mb-4"><h3 className="font-heading font-bold text-sm text-ink mb-3">Activity Trend</h3><ActivityTrendChart logs={logs}/></Card>
 
       <Card className="mb-4"><h3 className="font-heading font-bold text-sm text-ink mb-3">Pillar Breakdown</h3><PieChart data={insights.pillarCounts}/><p className="text-[11px] text-inkMuted mt-3 text-center">Most done: <span className="font-semibold">{PCFG[insights.mostDoneP]?.name||'—'}</span></p></Card>
 
@@ -1477,6 +1509,8 @@ function App(){
   const[loadingProgress,setLoadingProgress]=useState(0);
   const[loadingMessage,setLoadingMessage]=useState(getLoadingCopy());
   const[showPasswordSavedToast,setShowPasswordSavedToast]=useState(false);
+  const[usedMagicLink,setUsedMagicLink]=useState(false);
+  const[passwordHasBeenSet,setPasswordHasBeenSet]=useState(false);
   const recoveryModeRef=useRef(false);
   const bootDoneRef=useRef(false);
   const saveTimerRef=useRef(null);
@@ -1495,6 +1529,7 @@ function App(){
         let recoveredSession=null;
         try{
           recoveredSession=await recoverSessionFromUrl();
+          if(recoveredSession&&!recoveryModeRef.current)setUsedMagicLink(true);
         }catch{}
         const {data:{session:storedSession}}=await getSession();
         const session=recoveredSession||storedSession;
@@ -1638,6 +1673,7 @@ function App(){
       setPasswordDraft('');
       setPasswordConfirm('');
       setShowPasswordModal(false);
+      setPasswordHasBeenSet(true);
       setShowPasswordSavedToast(true);
     }catch(err){
       setPasswordError(err.message||'Unable to save your password right now.');
@@ -1714,10 +1750,10 @@ function App(){
           <p className="text-[11px] text-inkMuted mt-1">{sessionUser?.email}</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
-          <button onClick={()=>{setPasswordModalTitle('Set a password');setPasswordStatus('');setPasswordError('');setShowPasswordModal(true);}} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/80 border border-border hover:border-sand/40 text-xs text-inkSoft font-medium transition-all">
+          {usedMagicLink&&!passwordHasBeenSet&&<button onClick={()=>{setPasswordModalTitle('Set a password');setPasswordStatus('');setPasswordError('');setShowPasswordModal(true);}} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/80 border border-border hover:border-sand/40 text-xs text-inkSoft font-medium transition-all">
             <span className="w-5 h-5 rounded-full bg-sand/20 flex items-center justify-center text-[10px]">🔒</span>
             Set password
-          </button>
+          </button>}
           <button onClick={handleSignOut} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-surfaceAlt hover:bg-sageLight text-xs text-inkSoft font-medium transition-all">
             <span className="w-5 h-5 rounded-full bg-sage/10 flex items-center justify-center text-[10px]">✦</span>
             Sign out
