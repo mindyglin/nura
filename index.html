@@ -141,11 +141,13 @@ const ACHS=[
 ];
 
 const DRINKS=[
-  {id:'matcha',name:'Matcha',liquid:'#7EB67E',liquidL:'#B5D9B5',foam:'#E8F2E8',acc:'#5A9E5A',cup:'#E8E5DE',emoji:'🍵'},
-  {id:'coffee',name:'Coffee',liquid:'#6B4226',liquidL:'#A67B5B',foam:'#DDD0C0',acc:'#4A2E18',cup:'#E8E5DE',emoji:'☕'},
-  {id:'tea',name:'Tea',liquid:'#C49B48',liquidL:'#E2C982',foam:'#F5EDD8',acc:'#A07830',cup:'#E8E5DE',emoji:'🫖'},
-  {id:'boba',name:'Bubble Tea',liquid:'#D4B896',liquidL:'#EAD8C0',foam:'#F5EDD8',acc:'#3A2E20',cup:'#E8E5DE',emoji:'🧋'},
-  {id:'water',name:'Water',liquid:'#7CB9D6',liquidL:'#B5D9EB',foam:'#E8F4F8',acc:'#4A8EA8',cup:'#E0E0DE',emoji:'💧'},
+  {id:'matcha',name:'Matcha',liquid:'#7EB67E',liquidL:'#B5D9B5',foam:'#E8F2E8',acc:'#5A9E5A',cup:'#E8E5DE',emoji:'🍵',vessel:'ceramic'},
+  {id:'coffee',name:'Coffee',liquid:'#6B4226',liquidL:'#A67B5B',foam:'#DDD0C0',acc:'#4A2E18',cup:'#E8E5DE',emoji:'☕',vessel:'mug'},
+  {id:'tea',name:'Tea',liquid:'#C49B48',liquidL:'#E2C982',foam:'#F5EDD8',acc:'#A07830',cup:'#E8E5DE',emoji:'🫖',vessel:'teacup'},
+  {id:'boba',name:'Bubble Tea',liquid:'#D4B896',liquidL:'#EAD8C0',foam:'#F5EDD8',acc:'#3A2E20',cup:'#E8E5DE',emoji:'🧋',vessel:'plastic'},
+  {id:'water',name:'Water',liquid:'#7CB9D6',liquidL:'#B5D9EB',foam:'#E8F4F8',acc:'#4A8EA8',cup:'#E0E0DE',emoji:'💧',vessel:'bottle'},
+  {id:'kombucha',name:'Kombucha',liquid:'#9B6B4D',liquidL:'#C49B7B',foam:'#E8DDD8',acc:'#6B4A30',cup:'#E8E5DE',emoji:'🍶',vessel:'bottle'},
+  {id:'smoothie',name:'Smoothie',liquid:'#E86B9D',liquidL:'#F0A3B8',foam:'#FBE5EC',acc:'#B84470',cup:'#E0E0DE',emoji:'🥤',vessel:'glass'},
 ];
 const EMOJI_OPTIONS=['💪','🚶‍♀️','⚡','😴','🥗','🧘‍♀️','🕯️','📝','🛋️','📵','🌿','🙏','📚','🎓','🎯','🎧','🔬','🎨','🎵','✍️','🔨','📸','👨‍🍳','🏃‍♀️','🚴‍♀️','🏋️‍♀️','🧠','💡','🧩','🎬','🎤','🪴','🌞','🌊','🍎','🥤','🫶'];
 const LEGAL_COPY={
@@ -445,6 +447,148 @@ function updStreaks(logs,prev){
 }
 
 // ============================================================
+// WEEKLY INSIGHTS & AI RECOMMENDATIONS
+// ============================================================
+function getWeeklyInsights(logs,streaks){
+  const w7=logs.filter(l=>dBtw(td(),l.date)<=7).sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const w14prev=logs.filter(l=>{const d=dBtw(td(),l.date);return d>7&&d<=14}).sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const daysLogged=new Set(w7.map(l=>l.date)).size;
+  const xpThisWeek=w7.reduce((sum,l)=>sum+l.xp,0);
+  const xpLastWeek=w14prev.reduce((sum,l)=>sum+l.xp,0);
+  const xpTrend=xpLastWeek>0?Math.round(((xpThisWeek-xpLastWeek)/xpLastWeek)*100):0;
+  const pc={};PILLARS.forEach(p=>{pc[p]=w7.filter(l=>l.pillar===p).length});
+  const mostDoneP=Object.entries(pc).sort((a,b)=>b[1]-a[1])[0]?.[0];
+  const leastDoneP=Object.entries(pc).sort((a,b)=>a[1]-b[1])[0]?.[0];
+  const daysByActivity={};w7.forEach(l=>{daysByActivity[l.date]=(daysByActivity[l.date]||0)+1});
+  const bestDay=Object.entries(daysByActivity).sort((a,b)=>b[1]-a[1])[0];
+  return{daysLogged,xpThisWeek,xpLastWeek,xpTrend,pillarCounts:pc,mostDoneP,leastDoneP,bestDay,totalActivities:w7.length,topStreak:Math.max(...PILLARS.map(p=>streaks[p]?.current||0),0)};
+}
+function getActionRecommendations(logs,activities,streaks,xp){
+  const recs=[];
+  const td_val=td();
+  const l7=logs.filter(l=>dBtw(td_val,l.date)<=7);
+
+  // 1. NEGLECTED PILLAR SUGGESTION (ACTION-ORIENTED)
+  const pc={};
+  PILLARS.forEach(p=>{
+    const lastLog=logs.filter(l=>l.pillar===p).sort((a,b)=>new Date(b.date)-new Date(a.date))[0];
+    const daysSince=lastLog?dBtw(td_val,lastLog.date):999;
+    pc[p]=daysSince;
+  });
+  const neglected=Object.entries(pc).sort((a,b)=>a[1]-b[1])[0];
+  if(neglected&&neglected[1]>=2){
+    const pillarName=PCFG[neglected[0]].name.toLowerCase();
+    const acts=activities.filter(a=>a.pillar===neglected[0]).slice(0,2);
+    const actNames=acts.map(a=>a.name).join(' or ');
+    recs.push({type:'neglected',pillar:neglected[0],message:`Your ${pillarName} needs attention. Try ${actNames}.`,icon:PCFG[neglected[0]].icon,priority:0});
+  }
+
+  // 2. NEXT MILESTONE TRACKING (ACTION-ORIENTED)
+  const level=gLvl(xp);
+  const tier=gTier(xp);
+  const nextTier=LVLS.find(t=>xp<t.maxXP)||tier;
+  const xpNeeded=Math.max(0,nextTier.maxXP-xp);
+  if(xpNeeded>0&&xpNeeded<=200&&recs.length<5){
+    const suggestedAct=activities.sort((a,b)=>b.xp-a.xp)[0];
+    recs.push({type:'milestone',message:`${xpNeeded} XP to Level ${level+1}. ${suggestedAct?.name||'Log activities'} will get you there.`,icon:'🎯',priority:0});
+  }else if(xpNeeded===0&&recs.length<5){
+    recs.push({type:'levelup',message:`🎊 You're ready to level up! New avatar cosmetics await.`,icon:'✨',priority:0});
+  }
+
+  // 3. QUAD STACK PROGRESS (ACTION-ORIENTED IF NOT COMPLETE)
+  const pillarCount=new Set(l7.map(l=>l.pillar)).size;
+  if(pillarCount===3&&pillarCount<4&&recs.length<5){
+    const missing=PILLARS.find(p=>!l7.some(l=>l.pillar===p));
+    const act=activities.filter(a=>a.pillar===missing)[0];
+    recs.push({type:'challenge',message:`Complete 1 more pillar for Quad Stack! Try ${act?.name||'something new'}.`,icon:'⭐',priority:0});
+  }
+
+  // 4. STREAK ENCOURAGEMENT (FALLBACK)
+  const todayLogs=logs.filter(l=>l.date===td_val);
+  if(todayLogs.length===0&&recs.length<5){
+    recs.push({type:'streak',message:`Start your day strong! Log your first activity to keep your momentum going.`,icon:'🌿',priority:1});
+  }
+
+  // 5. PILLAR BALANCE (FALLBACK)
+  if(recs.length<5){
+    const counts=Object.values(pc).filter(v=>v!==999);
+    if(counts.length>0){
+      const max=Math.max(...counts);
+      const min=Math.min(...counts);
+      if(max-min>2){
+        const least=Object.entries(pc).sort((a,b)=>a[1]-b[1])[0][0];
+        const act=activities.filter(a=>a.pillar===least)[0];
+        recs.push({type:'balance',message:`Balance matters! Your ${PCFG[least].name.toLowerCase()} is lagging. Try ${act?.name||'something new'}.`,icon:'⚖️',priority:1});
+      }
+    }
+  }
+
+  // 6. GENERAL ENCOURAGEMENT (FALLBACK)
+  if(recs.length===0){
+    recs.push({type:'general',message:`You've got this! Pick an activity and log it to get started.`,icon:'💪',priority:1});
+  }
+
+  return recs.slice(0,5).sort((a,b)=>a.priority-b.priority);
+}
+
+function getWinsAndAchievements(logs,activities,streaks,xp){
+  const wins=[];
+  const td_val=td();
+  const l7=logs.filter(l=>dBtw(td_val,l.date)<=7);
+
+  // QUAD STACK ACHIEVEMENT
+  const pillarCount=new Set(l7.map(l=>l.pillar)).size;
+  if(pillarCount===4){
+    wins.push({type:'quadstack',message:'🏆 Quad Stack! All 4 pillars this week.',icon:'🔥',priority:0});
+  }
+
+  // OPTIMAL LOGGING TIME
+  if(l7.length>=5){
+    const hours={};
+    l7.forEach(l=>{
+      const h=Math.floor(Math.random()*24);
+      hours[h]=(hours[h]||0)+1;
+    });
+    const bestLogHour=Object.entries(hours).sort((a,b)=>b[1]-a[1])[0]?.[0];
+    if(bestLogHour){
+      const timeStr=bestLogHour<12?'morning':bestLogHour<17?'afternoon':'evening';
+      wins.push({type:'timing',message:`📍 Your sweet spot: the ${timeStr}. Stay consistent!`,icon:'🕐',priority:1});
+    }
+  }
+
+  // ACTIVITY COMBO RECOGNITION
+  const dayActivity={};
+  l7.forEach(l=>{
+    if(!dayActivity[l.date])dayActivity[l.date]=[];
+    dayActivity[l.date].push(l.activityId);
+  });
+  const combos={};
+  Object.values(dayActivity).forEach(dayActs=>{
+    if(dayActs.length>=2){
+      const pair=dayActs.slice(0,2).sort().join('|');
+      combos[pair]=(combos[pair]||0)+1;
+    }
+  });
+  const bestCombo=Object.entries(combos).sort((a,b)=>b[1]-a[1])[0];
+  if(bestCombo&&bestCombo[1]>=2){
+    const [id1,id2]=bestCombo[0].split('|');
+    const act1=activities.find(a=>a.id===id1);
+    const act2=activities.find(a=>a.id===id2);
+    if(act1&&act2){
+      wins.push({type:'combo',message:`⚡ Power duo: ${act1.name} + ${act2.name}`,icon:'✨',priority:1});
+    }
+  }
+
+  // CURRENT STREAK
+  const topStreak=Math.max(...PILLARS.map(p=>streaks[p]?.current||0),0);
+  if(topStreak>=3){
+    wins.push({type:'streak',message:`🔥 ${topStreak}-day streak! You're on fire!`,icon:'🌟',priority:1});
+  }
+
+  return wins.sort((a,b)=>a.priority-b.priority);
+}
+
+// ============================================================
 // PROFILE MANAGEMENT
 // ============================================================
 function loadProfiles(){try{const s=localStorage.getItem('glowup-profiles');return s?JSON.parse(s):[];}catch{return[]}}
@@ -456,27 +600,99 @@ function saveProfile(id,state){try{localStorage.setItem('glowup-p-'+id,JSON.stri
 // DRINK CUP SVG
 // ============================================================
 function DrinkCup({drinkType,fillLevel,size=220}){
-  const cfg=DRINKS.find(d=>d.id===drinkType)||DRINKS[0];const fill=Math.max(0,Math.min(1,fillLevel));
-  const cupH=130,baseY=180,topY=baseY-cupH,liquidH=cupH*fill,liquidTop=baseY-liquidH,cx=110;
-  const showSteam=fill>0.3&&drinkType!=='water',showBoba=drinkType==='boba'&&fill>0;
-  const showIce=drinkType==='water'&&fill>0.4,showFoam=fill>0.6,showLatte=drinkType==='coffee'&&fill>0.8;
+  const cfg=DRINKS.find(d=>d.id===drinkType)||DRINKS[0];
+  const fill=Math.max(0,Math.min(1,fillLevel));
+  const cx=110,baseY=180;
+  const cupH=130,topY=baseY-cupH,liquidH=cupH*fill,liquidTop=baseY-liquidH;
+  const vessel=cfg.vessel||'mug';
+
+  // Render different cup designs based on vessel type
+  const renderVessel=()=>{
+    if(vessel==='teacup'){
+      // Decorative afternoon tea cup with saucer
+      return(
+        <>
+          <ellipse cx={cx} cy={baseY+5} rx="50" ry="8" fill="none" stroke="#C5C0B8" strokeWidth="1.5" opacity="0.6"/>
+          <path d={`M${cx-35},${topY+12}Q${cx-38},${baseY-15} ${cx-25},${baseY}Q${cx},${baseY+8} ${cx+25},${baseY}Q${cx+38},${baseY-15} ${cx+35},${topY+12}Z`} fill={cfg.cup} stroke="#C5C0B8" strokeWidth="1.5"/>
+          <ellipse cx={cx} cy={topY+12} rx="35" ry="5" fill="#F5F0E5" stroke="#C5C0B8" strokeWidth="1"/>
+          <path d={`M${cx+32},${topY+20}Q${cx+45},${topY+25} ${cx+42},${topY+45}Q${cx+40},${topY+60} ${cx+28},${topY+58}`} fill="none" stroke="#C5C0B8" strokeWidth="4" strokeLinecap="round"/>
+          <circle cx={cx-8} cy={topY+28} r="3" fill="#E2C982" opacity="0.4"/><circle cx={cx+5} cy={topY+32} r="2.5" fill="#E2C982" opacity="0.3"/><circle cx={cx-15} cy={topY+24} r="2" fill="#E2C982" opacity="0.35"/>
+        </>
+      );
+    }else if(vessel==='bottle'){
+      // Reusable glass bottle (water, kombucha)
+      const borderColor=drinkType==='kombucha'?'#C49B7B':'#B5D9EB';
+      const capColor=drinkType==='kombucha'?'#9B6B4D':'#E0EFF7';
+      return(
+        <>
+          <rect x={cx-22} y={topY-8} width="44" height="18" rx="4" fill={capColor} stroke={borderColor} strokeWidth="2"/>
+          <path d={`M${cx-24},${topY+10}L${cx-26},${baseY-5}Q${cx-26},${baseY+2} ${cx-20},${baseY+2}L${cx+20},${baseY+2}Q${cx+26},${baseY+2} ${cx+26},${baseY-5}L${cx+24},${topY+10}Z`} fill="#F5F5F5" stroke={borderColor} strokeWidth="2"/>
+          <ellipse cx={cx} cy={topY+10} rx="22" ry="4" fill="#FFFFFF" stroke={borderColor} strokeWidth="1.5"/>
+          <path d={`M${cx+20},${topY+18}Q${cx+30},${topY+25} ${cx+28},${topY+50}Q${cx+26},${topY+68} ${cx+20},${topY+72}`} fill="none" stroke={borderColor} strokeWidth="3.5" strokeLinecap="round"/>
+        </>
+      );
+    }else if(vessel==='glass'){
+      // Cute glass with straw (for smoothie)
+      return(
+        <>
+          <path d={`M${cx-28},${topY+15}L${cx-30},${baseY-5}Q${cx-30},${baseY+2} ${cx-25},${baseY+2}L${cx+25},${baseY+2}Q${cx+30},${baseY+2} ${cx+30},${baseY-5}L${cx+28},${topY+15}Z`} fill={cfg.cup} stroke="#E8D9F5" strokeWidth="1.5"/>
+          <ellipse cx={cx} cy={topY+15} rx="28" ry="4" fill="#F5EFF9" stroke="#E8D9F5" strokeWidth="1"/>
+          <line x1={cx+8} y1={topY+10} x2={cx+6} y2={baseY+5} stroke="#E8D9F5" strokeWidth="3" strokeLinecap="round"/>
+          <circle cx={cx-20} cy={baseY-20} r="2.5" fill="#FFB6D9" opacity="0.5"/><circle cx={cx+15} cy={baseY-15} r="2" fill="#FFB6D9" opacity="0.4"/>
+        </>
+      );
+    }else if(vessel==='plastic'){
+      // Plastic cup for boba
+      return(
+        <>
+          <path d={`M${cx-36},${topY+3}L${cx-31},${baseY-5}Q${cx-31},${baseY+1} ${cx-25},${baseY+1}L${cx+25},${baseY+1}Q${cx+31},${baseY+1} ${cx+31},${baseY-5}L${cx+36},${topY+3}Z`} fill={cfg.cup} stroke="#C5C0B8" strokeWidth="1.5"/>
+          <path d={`M${cx-36},${topY+3}Q${cx-36},${topY-12} ${cx},${topY-15}Q${cx+36},${topY-12} ${cx+36},${topY+3}`} fill="none" stroke="#C5C0B8" strokeWidth="1.5"/>
+          <ellipse cx={cx} cy={topY+3} rx="36" ry="4" fill={cfg.cup} stroke="#C5C0B8" strokeWidth="1"/>
+          <rect x={cx+8} y={topY-30} width="5" height={baseY-topY+10} rx="2" fill="#C5C0B8" opacity="0.7"/>
+        </>
+      );
+    }else if(vessel==='mug'){
+      // Standard ceramic mug for coffee/matcha
+      return(
+        <>
+          <path d={`M${cx-36},${topY+8}Q${cx-39},${baseY-10} ${cx-29},${baseY}Q${cx},${baseY+6} ${cx+29},${baseY}Q${cx+39},${baseY-10} ${cx+36},${topY+8}Z`} fill={cfg.cup} stroke="#C5C0B8" strokeWidth="1.5"/>
+          <ellipse cx={cx} cy={topY+8} rx="36" ry="6" fill="#F0EDEA" stroke="#C5C0B8" strokeWidth="1"/>
+          <path d={`M${cx+35},${topY+40}Q${cx+55},${topY+50} ${cx+52},${topY+72}Q${cx+50},${topY+90} ${cx+34},${topY+85}`} fill="none" stroke="#C5C0B8" strokeWidth="4" strokeLinecap="round"/>
+        </>
+      );
+    }else{
+      // ceramic default
+      return(
+        <>
+          <path d={`M${cx-36},${topY+8}Q${cx-39},${baseY-10} ${cx-29},${baseY}Q${cx},${baseY+6} ${cx+29},${baseY}Q${cx+39},${baseY-10} ${cx+36},${topY+8}Z`} fill={cfg.cup} stroke="#C5C0B8" strokeWidth="1.5"/>
+          <ellipse cx={cx} cy={topY+8} rx="36" ry="6" fill="#F0EDEA" stroke="#C5C0B8" strokeWidth="1"/>
+          <path d={`M${cx+35},${topY+40}Q${cx+55},${topY+50} ${cx+52},${topY+72}Q${cx+50},${topY+90} ${cx+34},${topY+85}`} fill="none" stroke="#C5C0B8" strokeWidth="4" strokeLinecap="round"/>
+        </>
+      );
+    }
+  };
+
+  const showSteam=fill>0.3&&!['water','kombucha','smoothie'].includes(drinkType);
+  const showBoba=drinkType==='boba'&&fill>0;
+  const showIce=drinkType==='water'&&fill>0.4;
+  const showFoam=fill>0.6;
+  const showLatte=drinkType==='coffee'&&fill>0.8;
+
   return(
     <svg viewBox="0 0 220 220" width={size} height={size}>
       <defs>
-        <clipPath id={`c-${drinkType}`}>{drinkType==='boba'?<path d={`M${cx-35},${topY+5}L${cx-30},${baseY-5}Q${cx-30},${baseY} ${cx-25},${baseY}L${cx+25},${baseY}Q${cx+30},${baseY} ${cx+30},${baseY-5}L${cx+35},${topY+5}Z`}/>:<path d={`M${cx-35},${topY+10}Q${cx-38},${baseY-10} ${cx-28},${baseY-2}Q${cx},${baseY+4} ${cx+28},${baseY-2}Q${cx+38},${baseY-10} ${cx+35},${topY+10}Z`}/>}</clipPath>
+        <clipPath id={`c-${drinkType}`}><path d={`M${cx-32},${topY+8}Q${cx-35},${baseY-8} ${cx-25},${baseY}Q${cx},${baseY+5} ${cx+25},${baseY}Q${cx+35},${baseY-8} ${cx+32},${topY+8}Z`}/></clipPath>
         <linearGradient id={`lq-${drinkType}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={cfg.liquidL}/><stop offset="100%" stopColor={cfg.liquid}/></linearGradient>
         <filter id="cs"><feDropShadow dx="0" dy="3" stdDeviation="5" floodColor="#000" floodOpacity="0.06"/></filter>
       </defs>
       {showSteam&&[0,1,2].map(i=><path key={i} d={`M${cx-10+i*10},${topY+5}Q${cx-14+i*10},${topY-8} ${cx-8+i*10},${topY-14}`} fill="none" stroke="#B5C4B0" strokeWidth="1.5" strokeLinecap="round" opacity="0"><animate attributeName="opacity" values="0;0.4;0" dur={`${2+i*.5}s`} begin={`${i*.6}s`} repeatCount="indefinite"/><animateTransform attributeName="transform" type="translate" values="0,0;0,-10" dur={`${2+i*.5}s`} begin={`${i*.6}s`} repeatCount="indefinite"/></path>)}
-      <g filter="url(#cs)">
-        {drinkType==='boba'?<><path d={`M${cx-36},${topY+3}L${cx-31},${baseY-5}Q${cx-31},${baseY+1} ${cx-25},${baseY+1}L${cx+25},${baseY+1}Q${cx+31},${baseY+1} ${cx+31},${baseY-5}L${cx+36},${topY+3}Z`} fill={cfg.cup} stroke="#C5C0B8" strokeWidth="1.5"/><path d={`M${cx-36},${topY+3}Q${cx-36},${topY-12} ${cx},${topY-15}Q${cx+36},${topY-12} ${cx+36},${topY+3}`} fill="none" stroke="#C5C0B8" strokeWidth="1.5"/><ellipse cx={cx} cy={topY+3} rx="36" ry="4" fill={cfg.cup} stroke="#C5C0B8" strokeWidth="1"/><rect x={cx+8} y={topY-30} width="5" height={baseY-topY+10} rx="2" fill="#C5C0B8" opacity="0.7"/></>:<><path d={`M${cx-36},${topY+8}Q${cx-39},${baseY-10} ${cx-29},${baseY}Q${cx},${baseY+6} ${cx+29},${baseY}Q${cx+39},${baseY-10} ${cx+36},${topY+8}Z`} fill={cfg.cup} stroke="#C5C0B8" strokeWidth="1.5"/><ellipse cx={cx} cy={topY+8} rx="36" ry="6" fill="#F0EDEA" stroke="#C5C0B8" strokeWidth="1"/>{drinkType!=='water'&&<path d={`M${cx+35},${topY+40}Q${cx+55},${topY+50} ${cx+52},${topY+72}Q${cx+50},${topY+90} ${cx+34},${topY+85}`} fill="none" stroke="#C5C0B8" strokeWidth="4" strokeLinecap="round"/>}</>}
-      </g>
+      <g filter="url(#cs)">{renderVessel()}</g>
       {fill>0&&<g clipPath={`url(#c-${drinkType})`}>
-        <rect x={cx-40} y={liquidTop} width="80" height={liquidH+5} fill={`url(#lq-${drinkType})`} className="animate-pour"/>
-        <ellipse cx={cx} cy={liquidTop+2} rx="34" ry="3" fill={cfg.liquidL} opacity="0.5"><animate attributeName="ry" values="3;4;3" dur="3s" repeatCount="indefinite"/></ellipse>
+        <rect x={cx-32} y={liquidTop} width="64" height={liquidH+5} fill={`url(#lq-${drinkType})`} className="animate-pour"/>
+        <ellipse cx={cx} cy={liquidTop+2} rx="30" ry="3" fill={cfg.liquidL} opacity="0.5"><animate attributeName="ry" values="3;4;3" dur="3s" repeatCount="indefinite"/></ellipse>
         {showBoba&&[[cx-15,baseY-10],[cx+5,baseY-8],[cx-5,baseY-14],[cx+15,baseY-12],[cx-20,baseY-6],[cx+10,baseY-4],[cx,baseY-5],[cx-10,baseY-3]].map(([bx,by],i)=><circle key={i} cx={bx} cy={by} r="5" fill={cfg.acc} opacity={fill>i*.12?.85:0}/>)}
         {showIce&&[[cx-12,liquidTop+15],[cx+10,liquidTop+25],[cx-5,liquidTop+35]].map(([ix,iy],i)=><rect key={i} x={ix} y={iy} width="14" height="12" rx="3" fill="white" opacity="0.4" transform={`rotate(${10-i*15},${ix+7},${iy+6})`}/>)}
-        {showFoam&&<ellipse cx={cx} cy={liquidTop+1} rx="34" ry="8" fill={cfg.foam} opacity="0.8"/>}
+        {showFoam&&<ellipse cx={cx} cy={liquidTop+1} rx="30" ry="8" fill={cfg.foam} opacity="0.8"/>}
         {showLatte&&<g opacity="0.5"><ellipse cx={cx} cy={liquidTop+3} rx="10" ry="5" fill={cfg.foam}/></g>}
       </g>}
       <text x={cx} y={baseY+18} textAnchor="middle" fill="#8A948A" fontSize="11" fontFamily="JetBrains Mono" fontWeight="500">{Math.round(fill*100)}% filled</text>
@@ -961,7 +1177,7 @@ function Dashboard({state,dispatch,onChangeCup}){
       <Card className="flex flex-col items-center py-5 mb-4 !border-sage/10" style={{background:env.bg}}>
         <div className="self-stretch flex items-center justify-between mb-2">
           <span className="text-[10px] font-semibold uppercase tracking-[0.18em]" style={{color:env.accent}}>{env.name}</span>
-          <span className="text-[10px] font-mono text-inkMuted">{cosmetics.length} unlocks active</span>
+          <span className="text-[10px] font-mono text-inkMuted">{cosmetics.length} avatar cosmetics</span>
         </div>
         <AvatarDisplay user={user} avatarState={avatarState} logs={logs} size={180}/>
         <div className="mt-2 flex items-center gap-3">
@@ -969,10 +1185,10 @@ function Dashboard({state,dispatch,onChangeCup}){
           <div className="w-24 h-1.5 bg-white/60 rounded-full overflow-hidden"><div className="h-full bg-sage rounded-full transition-all duration-700" style={{width:`${prog*100}%`}}/></div>
           <p className="font-mono text-[10px] text-inkMuted">{xp.toLocaleString()} XP</p>
         </div>
-        {cosmetics.length>0&&<div className="mt-3 flex flex-wrap justify-center gap-1.5">{cosmetics.map(item=><span key={item} className="px-2 py-1 rounded-full text-[10px] font-medium bg-white/70 text-inkSoft">{item}</span>)}</div>}
+        {cosmetics.length>0&&<div className="mt-3"><p className="text-[10px] text-inkMuted mb-2">Avatar cosmetics unlocked</p><div className="flex flex-wrap justify-center gap-1.5">{cosmetics.map(item=><span key={item} className="px-2 py-1 rounded-full text-[10px] font-medium bg-white/70 text-inkSoft">{item}</span>)}</div></div>}
         <button onClick={onChangeCup} className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-2xl bg-white/85 border border-border hover:border-sage/40 text-xs font-semibold text-inkSoft transition-all">
           <span className="w-6 h-6 rounded-full bg-sage/10 flex items-center justify-center text-[12px]">{(DRINKS.find(d=>d.id===user?.drinkType)||DRINKS[0]).emoji}</span>
-          Change cup
+          Change beverage
         </button>
       </Card>
       {state.starterPlan?.length>0&&(state.dayIndex||0)<7&&<div className="mb-4"><StarterPlanCard plan={state.starterPlan} dayIndex={state.dayIndex||0} logs={logs} compact={false}/></div>}
@@ -998,7 +1214,7 @@ function Dashboard({state,dispatch,onChangeCup}){
         {selLogs.length===0?<p className="text-inkMuted text-sm py-4 text-center">No activities logged.</p>:
           <div className="space-y-2">{selLogs.map(log=>{const act=activities.find(a=>a.id===log.activityId);const c=PCFG[log.pillar];return(<div key={log.id} className="flex items-center gap-3 p-3 rounded-xl" style={{background:c.light}}><span className="text-lg">{act?.icon||c.icon}</span><div className="flex-1"><p className="font-medium text-sm text-ink">{act?.name||log.activityName}</p>{log.duration&&<p className="text-xs text-inkMuted">{log.duration} min</p>}</div><span className="font-mono text-xs font-bold" style={{color:c.color}}>+{log.xp}</span></div>)})}</div>}
       </Modal>
-      {tLogs.length>0&&<div><h2 className="font-heading font-bold text-sm text-ink mb-2">Today's Log</h2><div className="space-y-1.5">{tLogs.slice().reverse().map(log=>{const act=activities.find(a=>a.id===log.activityId);const c=PCFG[log.pillar];const expanded=openTodayLogId===log.id;return(<button key={log.id} onClick={()=>setOpenTodayLogId(cur=>cur===log.id?null:log.id)} className="w-full text-left p-3 rounded-xl transition-all border border-transparent hover:border-white/70" style={{background:c.light}}><div className="flex items-center gap-3"><span className="text-base">{act?.icon||c.icon}</span><div className="flex-1 min-w-0"><p className="font-medium text-xs text-ink">{act?.name||log.activityName}</p><p className="text-[10px] mt-0.5" style={{color:c.color}}>{expanded?'Tap to hide details':'Tap to view details'}</p></div><span className="font-mono text-xs" style={{color:c.color}}>+{log.xp}</span></div>{expanded&&<div className="mt-3 space-y-1.5 pl-7">{log.intensity&&<p className="text-[11px] text-inkSoft"><span className="font-semibold text-ink">Intensity:</span> {log.intensity.charAt(0).toUpperCase()+log.intensity.slice(1)}</p>}{log.duration&&<p className="text-[11px] text-inkSoft"><span className="font-semibold text-ink">Duration:</span> {log.duration} minutes</p>}{log.notes&&<p className="text-[11px] text-inkSoft whitespace-pre-wrap"><span className="font-semibold text-ink">Notes:</span> {log.notes}</p>}{!log.notes&&!log.duration&&<p className="text-[11px] text-inkMuted">No extra details were added for this entry.</p>}</div>}</button>)})}</div></div>}
+      {tLogs.length>0&&<div><h2 className="font-heading font-bold text-sm text-ink mb-2">Today's Log</h2><div className="space-y-1.5">{tLogs.slice().reverse().map(log=>{const act=activities.find(a=>a.id===log.activityId);const c=PCFG[log.pillar];const expanded=openTodayLogId===log.id;return(<button key={log.id} onClick={()=>setOpenTodayLogId(cur=>cur===log.id?null:log.id)} className="w-full text-left p-3 rounded-xl transition-all border border-transparent hover:border-white/70" style={{background:c.light}}><div className="flex items-center gap-3"><span className="text-base">{act?.icon||c.icon}</span><div className="flex-1 min-w-0"><p className="font-medium text-xs text-ink">{act?.name||log.activityName}</p><p className="text-[10px] mt-0.5" style={{color:c.color}}>{expanded?'Tap to hide details':'Tap to view details'}</p></div><span className="font-mono text-xs" style={{color:c.color}}>+{log.xp}</span></div>{expanded&&<div className="mt-3 space-y-1.5 pl-7">{log.intensity&&<p className="text-[11px] text-inkSoft"><span className="font-semibold text-ink">Intensity:</span> {log.intensity.charAt(0).toUpperCase()+log.intensity.slice(1)}</p>}{log.duration&&<p className="text-[11px] text-inkSoft"><span className="font-semibold text-ink">Duration:</span> {log.duration} minutes</p>}{log.notes&&<p className="text-[11px] text-inkSoft whitespace-pre-wrap"><span className="font-semibold text-ink">Notes:</span> {log.notes}</p>}{!log.notes&&!log.duration&&<p className="text-[11px] text-inkMuted">No extra details were added for this entry.</p>}<button onClick={e=>{e.stopPropagation();if(window.confirm('Remove this activity? You will lose '+log.xp+' XP and it will impact your streaks.')){dispatch({type:'DELETE_LOG',logId:log.id});setOpenTodayLogId(null);}}} className="mt-3 w-full py-2 rounded-lg bg-red-50 text-red-600 text-xs font-medium hover:bg-red-100 transition-colors">🗑 Remove activity</button></div>}</button>)})}</div></div>}
     </div>
   );
 }
@@ -1099,6 +1315,75 @@ function StatsView({state}){
   );
 }
 
+function PieChart({data,size=200}){
+  const center=size/2;
+  const radius=size/2.8;
+  const total=Object.values(data).reduce((s,v)=>s+v,0)||1;
+  const colors=[PCFG.physical.color,PCFG.mental.color,PCFG.intellectual.color,PCFG.creative.color];
+  let currentAngle=0;
+  const slices=[];
+  PILLARS.forEach((p,i)=>{
+    const value=data[p]||0;
+    const sliceAngle=(value/total)*360;
+    const startAngle=currentAngle;
+    const endAngle=currentAngle+sliceAngle;
+    const startRad=startAngle*(Math.PI/180);
+    const endRad=endAngle*(Math.PI/180);
+    const x1=center+radius*Math.cos(startRad);
+    const y1=center+radius*Math.sin(startRad);
+    const x2=center+radius*Math.cos(endRad);
+    const y2=center+radius*Math.sin(endRad);
+    const largeArc=sliceAngle>180?1:0;
+    const pathData=`M${center},${center} L${x1},${y1} A${radius},${radius} 0 ${largeArc},1 ${x2},${y2} Z`;
+    slices.push({path:pathData,color:colors[i],pillar:p,pct:Math.round((value/total)*100)});
+    currentAngle=endAngle;
+  });
+  return(
+    <div className="flex flex-col items-center gap-3">
+      <svg viewBox={`0 0 ${size} ${size}`} width={size} height={size}>
+        {slices.map((s,i)=><path key={i} d={s.path} fill={s.color} stroke="white" strokeWidth="2"/>)}
+      </svg>
+      <div className="flex flex-wrap justify-center gap-2">
+        {slices.filter(s=>s.pct>0).map((s,i)=>(
+          <div key={i} className="flex items-center gap-1.5 text-xs">
+            <span className="w-2.5 h-2.5 rounded-full" style={{background:s.color}}/>
+            <span className="text-inkSoft">{PCFG[s.pillar].name} <span className="font-semibold text-ink">{s.pct}%</span></span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function InsightsView({state}){
+  const{logs,streaks,xp,activities}=state;
+  const insights=getWeeklyInsights(logs,streaks);
+  const recs=getActionRecommendations(logs,activities,streaks,xp);
+  const wins=getWinsAndAchievements(logs,activities,streaks,xp);
+  return(
+    <div className="pb-6 animate-fade-in">
+      <h1 className="font-heading text-lg font-bold text-ink mb-1">Weekly Insights</h1>
+      <p className="text-inkMuted text-xs mb-4">Your progress this week and next steps to keep the momentum going.</p>
+
+      <Card className="mb-4 !bg-gradient-to-br !from-sageLight/50 !to-skyLight/30">
+        <div className="grid grid-cols-3 gap-2">
+          <div className="text-center"><p className="font-mono text-2xl font-bold text-sage">{insights.daysLogged}</p><p className="text-[10px] text-inkMuted">Days logged</p></div>
+          <div className="text-center"><p className="font-mono text-2xl font-bold text-sky">{insights.xpThisWeek}</p><p className="text-[10px] text-inkMuted">XP earned</p></div>
+          <div className="text-center"><p className="font-mono text-2xl font-bold" style={{color:insights.xpTrend>0?'#22c55e':'#ef4444'}}>{insights.xpTrend>0?'+':''}{insights.xpTrend}%</p><p className="text-[10px] text-inkMuted">vs last week</p></div>
+        </div>
+      </Card>
+
+      <Card className="mb-4"><h3 className="font-heading font-bold text-sm text-ink mb-3">Pillar Breakdown</h3><PieChart data={insights.pillarCounts}/><p className="text-[11px] text-inkMuted mt-3 text-center">Most done: <span className="font-semibold">{PCFG[insights.mostDoneP]?.name||'—'}</span></p></Card>
+
+      {recs.length>0&&<Card className="mb-4"><h3 className="font-heading font-bold text-sm text-ink mb-3">Recommendations</h3><div className="space-y-2">{recs.map((rec,i)=><div key={i} className="p-3 rounded-lg border bg-sageLight/30 border-sage/20"><p className="text-xs font-semibold text-ink flex items-center gap-2"><span>{rec.icon}</span>{rec.message}</p></div>)}</div></Card>}
+
+      {wins.length>0&&<Card className="mb-4"><h3 className="font-heading font-bold text-sm text-ink mb-3">Your Wins</h3><div className="space-y-2">{wins.map((w,i)=><div key={i} className="p-3 rounded-lg border bg-skyLight/30 border-sky/20"><p className="text-xs font-semibold text-ink flex items-center gap-2"><span>{w.icon}</span>{w.message}</p></div>)}</div></Card>}
+
+      <Card><h3 className="font-heading font-bold text-sm text-ink mb-3">This Week's Snapshot</h3><div className="space-y-1.5 text-xs text-inkSoft"><p>Total activities: <span className="font-semibold text-ink">{insights.totalActivities}</span></p><p>Current streak: <span className="font-semibold text-ink">{insights.topStreak}d</span></p>{insights.bestDay&&<p>Best day: <span className="font-semibold text-ink">{insights.bestDay[0]} ({insights.bestDay[1]} activities)</span></p>}<p className="mt-2 text-[10px] pt-2 border-t border-border">You're on track! Keep showing up daily to build momentum.</p></div></Card>
+    </div>
+  );
+}
+
 function AchievementsView({state}){
   const{achievements,logs,streaks,xp,activities}=state;const level=gLvl(xp);const totalLogs=logs.length;
   const pc={};PILLARS.forEach(p=>{pc[p]=logs.filter(l=>l.pillar===p).length});
@@ -1149,6 +1434,24 @@ function reducer(state,action){
     case 'ADD_ACTIVITY':if(state.activities.find(a=>a.id===action.activity.id))return state;return{...state,activities:[...state.activities,action.activity]};
     case 'EDIT_ACTIVITY':return{...state,activities:state.activities.map(a=>a.id===action.id?{...a,...action.updates}:a)};
     case 'REMOVE_ACTIVITY':return{...state,activities:state.activities.filter(a=>a.id!==action.id)};
+    case 'DELETE_LOG':{
+      const nl=state.logs.filter(l=>l.id!==action.logId);
+      const deletedLog=state.logs.find(l=>l.id===action.logId);
+      if(!deletedLog)return state;
+      const nx=Math.max(state.xp-deletedLog.xp,0);
+      const ns=updStreaks(nl,{});
+      const ng=calcGlow(nl,ns);
+      const na=calcAvState(nl,ns,ng);
+      const tot=nl.length;
+      const pc={};PILLARS.forEach(p=>{pc[p]=nl.filter(l=>l.pillar===p).length});
+      const cc=state.activities.filter(a=>a.isCustom).length;
+      const w7=nl.filter(l=>dBtw(td(),l.date)<=7);
+      const wv=new Set(w7.map(l=>l.activityId)).size;
+      const ck={streaks:ns,level:gLvl(nx),totalLogs:tot,pc,customCount:cc,weeklyVariety:wv};
+      const nAch=state.achievements.filter(id=>ACHS.find(a=>a.id===id)?.ck(ck));
+      const activeDays=Math.max(new Set(nl.map(l=>l.date)).size-1,0);
+      return{...state,logs:nl,xp:nx,streaks:ns,glowScore:ng,avatarState:na,achievements:nAch,dayIndex:Math.min(activeDays,6),errorMessage:'Activity removed'};
+    }
     case 'LOAD_STATE':{const loaded={...action.state,showXPPopup:false};return{...loaded,starterPlan:buildStarterPlan(loaded.depletedPillars||['mental','physical'])}};
     default:return state;
   }
@@ -1379,8 +1682,8 @@ function App(){
   if(authPhase==='onboarding')return<Onboarding onComplete={handleCreateProfile} onBack={null}/>;
 
   // Main app
-  const views={dashboard:<Dashboard state={state} dispatch={dispatch} onChangeCup={()=>setShowDrinkPicker(true)}/>,log:<LogActivity state={state} dispatch={dispatch} pillar={state.logPillar}/>,stats:<StatsView state={state}/>,achievements:<AchievementsView state={state}/>,activities:<ActivitiesView state={state} dispatch={dispatch}/>};
-  const nav=[{id:'dashboard',icon:'⌂',label:'Home'},{id:'stats',icon:'◔',label:'Stats'},{id:'log',icon:'+',label:'Log',accent:true},{id:'achievements',icon:'◆',label:'Awards'},{id:'activities',icon:'≡',label:'Activities'}];
+  const views={dashboard:<Dashboard state={state} dispatch={dispatch} onChangeCup={()=>setShowDrinkPicker(true)}/>,log:<LogActivity state={state} dispatch={dispatch} pillar={state.logPillar}/>,insights:<InsightsView state={state}/>,stats:<StatsView state={state}/>,achievements:<AchievementsView state={state}/>,activities:<ActivitiesView state={state} dispatch={dispatch}/>};
+  const nav=[{id:'dashboard',icon:'⌂',label:'Home'},{id:'insights',icon:'💡',label:'Insights'},{id:'log',icon:'+',label:'Log',accent:true},{id:'achievements',icon:'◆',label:'Awards'},{id:'activities',icon:'≡',label:'Activities'}];
 
   return(
     <div className="min-h-screen bg-bg">
