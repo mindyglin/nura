@@ -82,6 +82,10 @@ const AUTH_READY=SUPABASE_URL.startsWith('http')&&SUPABASE_ANON_KEY&&SUPABASE_AN
 const AUTH_EMAIL_KEY='nura-last-email';
 const PROFILE_BACKUP_PREFIX='nura-profile-backup:';
 const SUPABASE_PROJECT_REF=AUTH_READY?new URL(SUPABASE_URL).hostname.split('.')[0]:'';
+const GUEST_KEY='nura-guest-state';
+function loadGuestState(){try{const raw=localStorage.getItem(GUEST_KEY);return raw?JSON.parse(raw):null}catch{return null}}
+function saveGuestState(s){try{const{showXPPopup,lastXPGain,errorMessage,...rest}=s;localStorage.setItem(GUEST_KEY,JSON.stringify(rest))}catch{}}
+function clearGuestState(){try{localStorage.removeItem(GUEST_KEY)}catch{}}
 const sb=AUTH_READY?window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:false,flowType:'pkce'}}):null;
 
 const PCFG={
@@ -808,7 +812,7 @@ function DrinkPicker({value,onChange}){
     </div>
   );
 }
-function AuthGate({screenMode='password',authNotice='',onResetComplete}){
+function AuthGate({screenMode='password',authNotice='',onResetComplete,onBack=null,reason=''}){
   const[email,setEmail]=useState('');
   const[password,setPassword]=useState('');
   const[resetEmail,setResetEmail]=useState('');
@@ -904,6 +908,8 @@ function AuthGate({screenMode='password',authNotice='',onResetComplete}){
     <div className="min-h-screen auth-shell flex items-center justify-center px-4">
       <LegalModal open={!!legal} onClose={()=>setLegal(null)} doc={legal}/>
       <div className="w-full max-w-md bg-white/85 backdrop-blur rounded-[28px] border border-white/70 shadow-xl p-6 animate-slide-up">
+        {onBack&&<button onClick={onBack} className="text-xs text-inkMuted hover:text-ink font-medium mb-2">← Keep exploring without an account</button>}
+        {reason&&mode!=='reset'&&<Card className="mb-4 !bg-sageLight/50 !border-sage/20"><p className="text-sm font-semibold text-sageDark">Create a free account to unlock this</p><p className="text-xs text-inkSoft mt-1">{reason} Everything you've logged so far comes with you.</p></Card>}
         <div className="text-center mb-6">
           <div className="hero-sun" aria-hidden="true">
             <div className="hero-sun-halo"/>
@@ -1131,7 +1137,7 @@ function Onboarding({onComplete,onBack}){
       <div className="w-full max-w-md">{steps[step]}</div>
       <div className="flex gap-2 mt-4">
         {step>0&&<button onClick={()=>setStep(s=>s-1)} className="text-inkMuted text-sm hover:text-ink">← Back</button>}
-        {step===0&&onBack&&<button onClick={onBack} className="text-inkMuted text-sm hover:text-ink">← Back</button>}
+        {step===0&&onBack&&<button onClick={onBack} className="text-inkMuted text-sm hover:text-ink">Already have an account? Sign in</button>}
       </div>
       <div className="flex gap-1.5 mt-4">{[0,1,2,3,4].map(i=><div key={i} className={`h-1 rounded-full transition-all ${i===step?'bg-sage w-5':'bg-border w-2'}`}/>)}</div>
     </div>
@@ -1511,19 +1517,51 @@ function App(){
   const[showPasswordSavedToast,setShowPasswordSavedToast]=useState(false);
   const[usedMagicLink,setUsedMagicLink]=useState(false);
   const[passwordHasBeenSet,setPasswordHasBeenSet]=useState(false);
+  const[authReason,setAuthReason]=useState('');
+  const authPhaseRef=useRef('loading');
+  useEffect(()=>{authPhaseRef.current=authPhase},[authPhase]);
   const recoveryModeRef=useRef(false);
   const bootDoneRef=useRef(false);
   const saveTimerRef=useRef(null);
   const[state,dispatch]=useReducer(reducer,INIT_STATE);
 
+  // Guest mode: anyone can use the app without an account; data lives on this device
+  const enterGuest=()=>{
+    setAuthReason('');
+    const guest=loadGuestState();
+    if(guest&&guest.onboarded){
+      dispatch({type:'LOAD_STATE',state:{...INIT_STATE,...guest,currentView:guest.currentView==='insights'?'dashboard':(guest.currentView||'dashboard')}});
+      setAuthPhase('app');
+    }else{
+      setAuthPhase('onboarding');
+    }
+  };
+  // When a guest signs in to an account with no saved data, bring their guest progress along
+  const migrateGuestTo=async(user)=>{
+    const guest=loadGuestState();
+    if(!guest||!guest.onboarded)return false;
+    const migrated={...INIT_STATE,...guest};
+    dispatch({type:'LOAD_STATE',state:migrated});
+    saveProfileBackups(user,migrated);
+    try{await saveRemoteProfile(user,migrated)}catch{}
+    clearGuestState();
+    return true;
+  };
+  const requireAccount=(reason)=>{
+    setAuthReason(reason||'');
+    setAuthNotice('');
+    setAuthScreenMode('password');
+    setAuthPhase('auth');
+  };
+
   useEffect(()=>{
     let mounted=true;
     const bootFallback=setTimeout(()=>{
-      if(mounted)setAuthPhase(current=>current==='loading'?'auth':current);
+      if(mounted&&authPhaseRef.current==='loading')enterGuest();
     },4000);
     (async()=>{
       try{
-        if(!AUTH_READY){setAuthPhase('auth');return;}
+        if(!AUTH_READY){enterGuest();return;}
         const recoveryType=getRecoveryType();
         recoveryModeRef.current=recoveryType==='recovery';
         let recoveredSession=null;
@@ -1541,7 +1579,7 @@ function App(){
           setAuthPhase('auth');
           return;
         }
-        if(!session?.user){setAuthScreenMode('password');setAuthPhase('auth');return;}
+        if(!session?.user){enterGuest();return;}
         setSessionUser(session.user);
         localStorage.setItem(AUTH_EMAIL_KEY,session.user.email||'');
         // Always try remote first for cross-device sync, fall back to local only if remote fails
@@ -1555,6 +1593,7 @@ function App(){
         if(remote){
           console.log('Boot: using remote data from Supabase');
           dispatch({type:'LOAD_STATE',state:{...INIT_STATE,...remote}});
+          clearGuestState();
           setAuthPhase('app');
           return;
         }
@@ -1566,11 +1605,12 @@ function App(){
           setAuthPhase('app');
           return;
         }
-        // No remote and no local backup - new user
+        // No remote and no local backup - carry over guest progress if there is any
+        if(await migrateGuestTo(session.user)){setAuthPhase('app');return;}
         console.log('Boot: no data found, going to onboarding');
         setAuthPhase('onboarding');
       }catch{
-        if(mounted)setAuthPhase('auth');
+        if(mounted)enterGuest();
       }
       bootDoneRef.current=true;
     })();
@@ -1607,10 +1647,12 @@ function App(){
       setLoadingMessage(getLoadingCopy());
       try{
         const [remote]=await Promise.all([withTimeout(loadRemoteProfile(user.id),5000),wait(900)]);
-        if(remote){dispatch({type:'LOAD_STATE',state:{...INIT_STATE,...remote}});setAuthPhase('app')}
+        if(remote){dispatch({type:'LOAD_STATE',state:{...INIT_STATE,...remote}});clearGuestState();setAuthPhase('app')}
+        else if(await migrateGuestTo(user)){setAuthPhase('app')}
         else{setAuthPhase('onboarding')}
       }catch{
-        setAuthPhase('onboarding');
+        if(await migrateGuestTo(user))setAuthPhase('app');
+        else setAuthPhase('onboarding');
       }
     }):{data:{subscription:{unsubscribe:()=>{}}}};
     return()=>{mounted=false;clearTimeout(bootFallback);subscription.unsubscribe();};
@@ -1650,8 +1692,21 @@ function App(){
     return()=>{if(saveTimerRef.current)clearTimeout(saveTimerRef.current);};
   },[state,authPhase,sessionUser]);
 
+  // Save guest progress on this device
+  useEffect(()=>{
+    if(authPhase!=='app'||sessionUser||!state.onboarded)return;
+    const t=setTimeout(()=>saveGuestState(state),250);
+    return()=>clearTimeout(t);
+  },[state,authPhase,sessionUser]);
+
   const handleCreateProfile=async(data)=>{
-    if(!sessionUser)return;
+    if(!sessionUser){
+      const payload={...data,name:data.name.trim()||'Friend'};
+      dispatch({type:'INIT_USER',data:payload});
+      saveGuestState({...INIT_STATE,...reducer(INIT_STATE,{type:'INIT_USER',data:payload})});
+      setAuthPhase('app');
+      return;
+    }
     const payload={...data,name:data.name.trim()||emailName(sessionUser.email)};
     dispatch({type:'INIT_USER',data:payload});
     const initialState={...INIT_STATE,...reducer(INIT_STATE,{type:'INIT_USER',data:payload})};
@@ -1714,11 +1769,26 @@ function App(){
   };
 
   if(authPhase==='loading')return<div className="min-h-screen bg-bg flex items-center justify-center px-6"><div className="w-full max-w-sm text-center"><div className="text-8xl loading-leaf">🌿</div><p className="mt-5 font-heading text-2xl text-ink">Loading Nura...</p><p className="mt-2 text-sm text-inkMuted">{loadingMessage}</p><div className="mt-6 h-3 w-full overflow-hidden rounded-full bg-borderLight"><div className="h-full rounded-full bg-gradient-to-r from-sage via-sky to-sand transition-all duration-300" style={{width:`${loadingProgress}%`}}/></div><p className="mt-2 text-xs font-mono text-inkMuted">{loadingProgress}%</p></div></div>;
-  if(authPhase==='auth')return<AuthGate screenMode={authScreenMode} authNotice={authNotice} onResetComplete={handleResetComplete}/>;
-  if(authPhase==='onboarding')return<Onboarding onComplete={handleCreateProfile} onBack={null}/>;
+  if(authPhase==='auth')return<AuthGate screenMode={authScreenMode} authNotice={authNotice} onResetComplete={handleResetComplete} onBack={!sessionUser&&authScreenMode!=='reset'?enterGuest:null} reason={authReason}/>;
+  if(authPhase==='onboarding')return<Onboarding onComplete={handleCreateProfile} onBack={!sessionUser&&AUTH_READY?()=>requireAccount(''):null}/>;
 
   // Main app
-  const views={dashboard:<Dashboard state={state} dispatch={dispatch} onChangeCup={()=>setShowDrinkPicker(true)}/>,log:<LogActivity state={state} dispatch={dispatch} pillar={state.logPillar}/>,insights:<InsightsView state={state}/>,stats:<StatsView state={state}/>,achievements:<AchievementsView state={state}/>,activities:<ActivitiesView state={state} dispatch={dispatch}/>};
+  const isGuest=!sessionUser;
+  const guestInsights=(
+    <div className="animate-slide-up">
+      <h1 className="font-heading text-lg font-bold text-ink mb-1">Weekly Insights</h1>
+      <p className="text-xs text-inkMuted mb-4">Your patterns, wins, and next steps</p>
+      <Card className="text-center !py-8">
+        <div className="text-5xl mb-3">💡</div>
+        <h3 className="font-heading font-bold text-base text-ink">See what your week is telling you</h3>
+        <p className="text-sm text-inkSoft mt-2 max-w-xs mx-auto">Create a free account to unlock weekly insights, personalized recommendations, and your wins. Your progress syncs across devices.</p>
+        <p className="text-xs text-inkMuted mt-2">You've logged {state.logs.length} {state.logs.length===1?'activity':'activities'} so far. It all comes with you.</p>
+        <Btn onClick={()=>requireAccount('Weekly insights and recommendations are part of your free Nura account.')} className="mt-5" size="lg">Create free account</Btn>
+        <button onClick={()=>dispatch({type:'SET_VIEW',view:'dashboard'})} className="block mx-auto mt-3 text-xs text-inkMuted hover:text-ink">Maybe later</button>
+      </Card>
+    </div>
+  );
+  const views={dashboard:<Dashboard state={state} dispatch={dispatch} onChangeCup={()=>setShowDrinkPicker(true)}/>,log:<LogActivity state={state} dispatch={dispatch} pillar={state.logPillar}/>,insights:isGuest?guestInsights:<InsightsView state={state}/>,stats:<StatsView state={state}/>,achievements:<AchievementsView state={state}/>,activities:<ActivitiesView state={state} dispatch={dispatch}/>};
   const nav=[{id:'dashboard',icon:'⌂',label:'Home'},{id:'insights',icon:'💡',label:'Insights'},{id:'log',icon:'+',label:'Log',accent:true},{id:'achievements',icon:'◆',label:'Awards'},{id:'activities',icon:'≡',label:'Activities'}];
 
   return(
@@ -1747,8 +1817,14 @@ function App(){
       <header className="max-w-lg mx-auto px-4 pt-3 pb-2 flex items-start justify-between gap-3">
         <div>
           <p className="font-heading text-2xl font-bold text-ink">Nura</p>
-          <p className="text-[11px] text-inkMuted mt-1">{sessionUser?.email}</p>
+          <p className="text-[11px] text-inkMuted mt-1">{sessionUser?.email||'Guest · saved on this device'}</p>
         </div>
+        {isGuest?<div className="flex items-center gap-2 flex-wrap justify-end">
+          {AUTH_READY&&<button onClick={()=>requireAccount('')} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sage text-white text-xs font-medium hover:opacity-90 transition-all">
+            <span className="w-5 h-5 rounded-full bg-white/20 flex items-center justify-center text-[10px]">✦</span>
+            Sign in / Sign up
+          </button>}
+        </div>:
         <div className="flex items-center gap-2 flex-wrap justify-end">
           {usedMagicLink&&!passwordHasBeenSet&&<button onClick={()=>{setPasswordModalTitle('Set a password');setPasswordStatus('');setPasswordError('');setShowPasswordModal(true);}} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/80 border border-border hover:border-sand/40 text-xs text-inkSoft font-medium transition-all">
             <span className="w-5 h-5 rounded-full bg-sand/20 flex items-center justify-center text-[10px]">🔒</span>
@@ -1758,7 +1834,7 @@ function App(){
             <span className="w-5 h-5 rounded-full bg-sage/10 flex items-center justify-center text-[10px]">✦</span>
             Sign out
           </button>
-        </div>
+        </div>}
       </header>
       <div className="max-w-lg mx-auto px-4 pb-24">
         {state.errorMessage&&<Card className="mb-4 !bg-red-50 !border-red-100"><div className="flex items-start justify-between gap-3"><p className="text-sm text-red-600">{state.errorMessage}</p><button onClick={()=>dispatch({type:'CLEAR_ERROR'})} className="text-red-400 text-xs">✕</button></div></Card>}
